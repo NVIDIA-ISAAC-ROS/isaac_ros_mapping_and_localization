@@ -1,0 +1,10 @@
+# Ignore all pycache files
+**/__pycache__/**
+
+# Ignore TensorRT plan files
+*.plan
+
+**/build
+
+.vscode
+*pb2.py
