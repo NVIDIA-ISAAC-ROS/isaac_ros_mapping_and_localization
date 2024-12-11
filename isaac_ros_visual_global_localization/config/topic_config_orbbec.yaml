@@ -1,0 +1,22 @@
+
+stereo_cameras:
+  - name: front_camera
+    left: /front_camera/left_ir/image_raw
+    left_camera_info: /front_camera/left_ir/camera_info
+    right: /front_camera/right_ir/image_raw
+    right_camera_info: /front_camera/right_ir/camera_info
+  - name: rear_camera
+    left: /rear_camera/left_ir/image_raw
+    left_camera_info: /rear_camera/left_ir/camera_info
+    right: /rear_camera/right_ir/image_raw
+    right_camera_info: /rear_camera/right_ir/camera_info
+  - name: left_camera
+    left: /left_camera/left_ir/image_raw
+    left_camera_info: /left_camera/left_ir/camera_info
+    right: /left_camera/right_ir/image_raw
+    right_camera_info: /left_camera/right_ir/camera_info
+  - name: right_camera
+    left: /right_camera/left_ir/image_raw
+    left_camera_info: /right_camera/left_ir/camera_info
+    right: /right_camera/right_ir/image_raw
+    right_camera_info: /right_camera/right_ir/camera_info

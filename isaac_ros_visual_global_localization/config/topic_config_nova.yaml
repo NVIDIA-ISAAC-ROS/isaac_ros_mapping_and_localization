@@ -1,0 +1,21 @@
+stereo_cameras:
+  - name: front_stereo_camera
+    left: /front_stereo_camera/left/image_compressed
+    left_camera_info: /front_stereo_camera/left/camera_info
+    right: /front_stereo_camera/right/image_compressed
+    right_camera_info: /front_stereo_camera/right/camera_info
+  - name: back_stereo_camera
+    left: /back_stereo_camera/left/image_compressed
+    left_camera_info: /back_stereo_camera/left/camera_info
+    right: /back_stereo_camera/right/image_compressed
+    right_camera_info: /back_stereo_camera/right/camera_info
+  - name: left_stereo_camera
+    left: /left_stereo_camera/left/image_compressed
+    left_camera_info: /left_stereo_camera/left/camera_info
+    right: /left_stereo_camera/right/image_compressed
+    right_camera_info: /left_stereo_camera/right/camera_info
+  - name: right_stereo_camera
+    left: /right_stereo_camera/left/image_compressed
+    left_camera_info: /right_stereo_camera/left/camera_info
+    right: /right_stereo_camera/right/image_compressed
+    right_camera_info: /right_stereo_camera/right/camera_info
