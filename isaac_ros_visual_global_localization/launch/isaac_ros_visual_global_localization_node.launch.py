@@ -15,36 +15,21 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from isaac_ros_launch_utils.all_types import *
+from typing import List
+
+from isaac_ros_launch_utils.all_types import Action, LaunchDescription
 import isaac_ros_launch_utils as lu
-import launch
 
 
-def get_camera_list(camera_names):
-    if lu.is_equal(camera_names, "front"):
-        return ['front_stereo_camera']
-    elif lu.is_equal(camera_names, "front_left"):
-        return ['front_stereo_camera', 'left_stereo_camera']
-    elif lu.is_equal(camera_names, "front_left_right"):
-        return ['front_stereo_camera', 'left_stereo_camera', 'right_stereo_camera']
-    elif lu.is_equal(camera_names, 'front_back_left_right'):
-        return ['front_stereo_camera', 'back_stereo_camera', 'left_stereo_camera', 'right_stereo_camera']
-    else:
-        return []
-
-
-def add_visual_global_localization(args: lu.ArgumentContainer) -> list[Action]:
+def add_visual_global_localization(args: lu.ArgumentContainer) -> List[Action]:
     actions = []
-
-    camera_list = get_camera_list(args.camera_names)
-    camera_names = ','.join(camera_list)
 
     actions.append(
         lu.include(
             'isaac_ros_visual_global_localization',
             'launch/include/visual_global_localization.launch.py',
             launch_arguments={
-                'vgl_enabled_stereo_cameras': camera_names,
+                'vgl_enabled_stereo_cameras': args.camera_names,
                 'container_name': args.container_name,
             }
         )
@@ -59,14 +44,9 @@ def generate_launch_description():
     args = lu.ArgumentContainer()
     args.add_arg(
         'camera_names',
-        default='front_back_left_right',
-        choices=[
-            'front',
-            'front_left',
-            'front_left_right',
-            'front_back_left_right',
-        ],
         cli=True,
+        description='Comma-separated list of camera names to use for localization (e.g., '
+                    '"front_stereo_camera,left_stereo_camera,right_stereo_camera")',
     )
     args.add_arg(
         'container_name',
@@ -75,4 +55,4 @@ def generate_launch_description():
     )
     args.add_opaque_function(add_visual_global_localization)
 
-    return launch.LaunchDescription(args.get_launch_actions())
+    return LaunchDescription(args.get_launch_actions())

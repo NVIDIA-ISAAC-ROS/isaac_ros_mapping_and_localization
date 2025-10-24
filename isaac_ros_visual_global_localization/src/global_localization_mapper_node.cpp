@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,16 +20,16 @@
 #include <chrono>
 #include <thread>
 
-#include <cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.hpp>
 
-#include "common/file_utils/dm_file_utils.h"
+#include "common/file_utils/file_utils.h"
 #include "common/macros/macros.h"
 #include "protos/visual/loop_closing/image_retrieval_config.pb.h"
 #include "visual/utils/constants.h"
 #include "isaac_ros_common/qos.hpp"
 #include "isaac_ros_visual_global_localization/constants.h"
 #include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
-
+#include "isaac_ros_common/cuda_stream.hpp"
 
 namespace nvidia
 {
@@ -38,7 +38,7 @@ namespace isaac_ros
 namespace visual_global_localization
 {
 
-using isaac::common::file_utils::DMFileUtils;
+using isaac::common::file_utils::FileUtils;
 using NitrosTimeStamp =
   message_filters::message_traits::TimeStamp<ImageType::BaseType>;
 
@@ -68,9 +68,13 @@ GlobalLocalizationMapperNode::GlobalLocalizationMapperNode(
 
 GlobalLocalizationMapperNode::~GlobalLocalizationMapperNode()
 {
+  // Add CUDA stream support so that this node does not block the default stream
+  CHECK_CUDA_ERROR(::nvidia::isaac_ros::common::initNamedCudaStream(
+    cuda_stream_, "isaac_ros_visual_global_mapper_localization"),
+    "Error initializing CUDA stream");
   // Save db file to disk
   RCLCPP_INFO(get_logger(), "Saving database to disk...");
-  const std::string db_filename = DMFileUtils::Get().JoinPath(
+  const std::string db_filename = FileUtils::JoinPath(
     map_dir_, isaac::visual::kImageRetrievalDatabaseFileName);
   if (!loop_closure_index_->Save(db_filename)) {
     RCLCPP_ERROR(get_logger(), "Failed to save the BoW map file.");
@@ -83,10 +87,10 @@ GlobalLocalizationMapperNode::~GlobalLocalizationMapperNode()
   }
   // Save frame metadata to disk
   RCLCPP_INFO(get_logger(), "Saving frame metadata to disk...");
-  const auto & frame_meta_file = DMFileUtils::Get().JoinPath(
+  const auto & frame_meta_file = FileUtils::JoinPath(
     map_dir_, "keyframes",
     isaac::visual::kFramesMetaFileName);
-  if (!DMFileUtils::Get().WriteProtoFileByExtension(frame_meta_file, output_frames_meta_).ok()) {
+  if (!FileUtils::WriteProtoFileByExtension(frame_meta_file, output_frames_meta_).ok()) {
     RCLCPP_ERROR_STREAM(get_logger(), "Can not save frames meta file to: " << frame_meta_file);
   }
 }
@@ -149,7 +153,7 @@ bool GlobalLocalizationMapperNode::InitGlobalMapper()
 {
   RCLCPP_INFO(get_logger(), "Loading vocabulary...");
   const std::string vocabulary_dir_path = map_dir_;
-  if (!DMFileUtils::Get().DirectoryExists(vocabulary_dir_path)) {
+  if (!FileUtils::DirectoryExists(vocabulary_dir_path)) {
     RCLCPP_ERROR_STREAM(
       get_logger(),
       "Vocabulary file: " << vocabulary_dir_path
@@ -158,14 +162,14 @@ bool GlobalLocalizationMapperNode::InitGlobalMapper()
   }
 
   const std::string image_retrieval_config_file_path =
-    DMFileUtils::Get().JoinPath(
+    FileUtils::JoinPath(
     config_dir_,
     isaac::visual::kImageRetrievalConfigName);
 
   // Initialize the loop closure index
   protos::visual::loop_closing::ImageRetrievalConfig image_retrieval_config;
   STATUS_OK_OR_RETURN_FALSE(
-    DMFileUtils::Get().ReadProtoFileByExtension(
+    FileUtils::ReadProtoFileByExtension(
       image_retrieval_config_file_path,
       &image_retrieval_config), "Failed to read config file: " + image_retrieval_config_file_path);
 
@@ -179,11 +183,11 @@ bool GlobalLocalizationMapperNode::InitGlobalMapper()
   }
 
   // Initialize keypoint detector
-  const std::string creation_params_file_path = DMFileUtils::Get().JoinPath(
+  const std::string creation_params_file_path = FileUtils::JoinPath(
     config_dir_, isaac::visual::kKeypointCreationConfigFilePath);
   protos::common::image::KeypointCreationParams keypoint_creation_params;
   STATUS_OK_OR_RETURN_FALSE(
-    DMFileUtils::Get().ReadProtoFileByExtension(
+    FileUtils::ReadProtoFileByExtension(
       creation_params_file_path,
       &keypoint_creation_params), "Failed to read param file: " + creation_params_file_path);
 
@@ -250,7 +254,9 @@ void GlobalLocalizationMapperNode::subscribeToTopics()
   }
 }
 
-void GlobalLocalizationMapperNode::inputImageCallback(const ImageType & image_msg, int camera_id)
+void GlobalLocalizationMapperNode::inputImageCallback(
+  const ImageType & image_msg,
+  camera_params_id_t camera_id)
 {
   const rclcpp::Time timestamp = NitrosTimeStamp::value(image_msg.GetMessage());
   RCLCPP_DEBUG_STREAM(
@@ -262,7 +268,7 @@ void GlobalLocalizationMapperNode::inputImageCallback(const ImageType & image_ms
 
 void GlobalLocalizationMapperNode::inputCameraInfoCallback(
   const CameraInfoType::ConstSharedPtr & camera_info_ptr,
-  uint32_t camera_id)
+  camera_params_id_t camera_id)
 {
   const auto & camera_info_msg = *camera_info_ptr;
   if (!camera_params_.count(camera_info_msg.header.frame_id)) {
@@ -414,9 +420,17 @@ bool GlobalLocalizationMapperNode::keyframeExtractAndMapping(
   img_msg.encoding = image->GetEncoding();
   img_msg.step = image->GetSizeInBytes() / image->GetHeight();
   img_msg.data.resize(image->GetSizeInBytes());
-  cudaMemcpy(
-    img_msg.data.data(), image->GetGpuData(), image->GetSizeInBytes(),
-    cudaMemcpyDefault);
+
+  if (cudaMemcpyAsync(img_msg.data.data(), image->GetGpuData(),
+                      image->GetSizeInBytes(), cudaMemcpyDefault,
+                      cuda_stream_) != cudaSuccess) {
+    RCLCPP_ERROR(get_logger(), "Failed to do the memcpy");
+    return false;
+  }
+  if (cudaStreamSynchronize(cuda_stream_) != cudaSuccess) {
+    RCLCPP_ERROR(get_logger(), "Failed to synchronize stream");
+    return false;
+  }
 
   // Note: the image is only support in RGB8/BGR8 format
   cv_bridge::CvImagePtr rgb_cv_ptr =
@@ -450,15 +464,16 @@ bool GlobalLocalizationMapperNode::keyframeExtractAndMapping(
   // Set metadata for the keyframe
   protos::visual::general::KeyframeMetaData keyframe_metadata;
   keyframe_metadata.mutable_camera_to_world()->CopyFrom(camera_to_world);
-  const int sample_id = processed_image_indices_[img_msg.header.frame_id]++;
-  keyframe_metadata.set_sample_id(sample_id);
-  const std::string image_name = img_msg.header.frame_id + "/" + std::to_string(sample_id) + ".jpg";
-  keyframe_metadata.set_image_name(image_name);
-  keyframe_metadata.set_id(keyframe_id_++);
-  keyframe_metadata.set_camera_params_id(camera_frame_id_to_camera_id_[img_msg.header.frame_id]);
+  processed_image_indices_[img_msg.header.frame_id]++;
+
   keyframe_metadata.set_timestamp_microseconds(
     img_msg.header.stamp.sec * kSecondsToMicroseconds +
     img_msg.header.stamp.nanosec * kNanosecondsToMicroseconds);
+  const std::string image_name = img_msg.header.frame_id + "/" + std::to_string(
+    keyframe_metadata.timestamp_microseconds()) + ".jpg";
+  keyframe_metadata.set_image_name(image_name);
+  keyframe_metadata.set_id(keyframe_id_++);
+  keyframe_metadata.set_camera_params_id(camera_frame_id_to_camera_id_[img_msg.header.frame_id]);
 
   // Add the keyframe to the build BoW map
   const auto keyframe_ptr =
@@ -469,16 +484,19 @@ bool GlobalLocalizationMapperNode::keyframeExtractAndMapping(
   *output_frames_meta_.add_keyframes_metadata() = keyframe_metadata;
 
   // Save the keyframe proto to disk
-  if (!saveKeyframeToDisk(img_msg.header.frame_id, keyframe_metadata.sample_id(), keyframe_proto)) {
+  if (!saveKeyframeToDisk(
+      img_msg.header.frame_id, keyframe_metadata.timestamp_microseconds(),
+      keyframe_proto))
+  {
     RCLCPP_ERROR(get_logger(), "Failed to save keyframe to disk");
     return false;
   }
   // Save image to disk
-  DMFileUtils::Get().EnsureDirectoryExists(
-    DMFileUtils::Get().JoinPath(map_dir_, "raw", img_msg.header.frame_id));
-  const std::string image_file_name = DMFileUtils::Get().JoinPath(
+  FileUtils::EnsureDirectoryExists(
+    FileUtils::JoinPath(map_dir_, "raw", img_msg.header.frame_id));
+  const std::string image_file_name = FileUtils::JoinPath(
     map_dir_, "raw", img_msg.header.frame_id, std::to_string(
-      keyframe_metadata.sample_id()) + isaac::common::kCameraImageFileExtension);
+      keyframe_metadata.timestamp_microseconds()) + isaac::common::kCameraImageFileExtension);
   if (!cv::imwrite(image_file_name, rgb_cv_ptr->image)) {
     RCLCPP_ERROR(get_logger(), "Failed to save image to disk");
     return false;
@@ -488,15 +506,15 @@ bool GlobalLocalizationMapperNode::keyframeExtractAndMapping(
 
 bool GlobalLocalizationMapperNode::saveKeyframeToDisk(
   const std::string & frame_id,
-  size_t sample_id,
+  uint64_t timestamp_microseconds,
   const protos::visual::general::Keyframe & keyframe)
 {
-  const std::string keyframe_path = DMFileUtils::Get().JoinPath(
+  const std::string keyframe_path = FileUtils::JoinPath(
     map_dir_, "keyframes", frame_id,
-    std::to_string(sample_id) + isaac::common::kProtoFileExtension);
+    std::to_string(timestamp_microseconds) + isaac::common::kProtoFileExtension);
   const std::string keyframe_directory =
-    DMFileUtils::Get().GetFileDirectory(keyframe_path);
-  if (!DMFileUtils::Get().EnsureDirectoryExists(
+    FileUtils::GetFileDirectory(keyframe_path);
+  if (!FileUtils::EnsureDirectoryExists(
       keyframe_directory))
   {
     RCLCPP_ERROR(get_logger(), "Failed to create directory: %s", keyframe_directory.c_str());
@@ -505,12 +523,12 @@ bool GlobalLocalizationMapperNode::saveKeyframeToDisk(
 
   RCLCPP_INFO_STREAM(
     get_logger(),
-    "Writing key frame: "
-      << sample_id << " to " << keyframe_path
+    "Writing key frame: " << frame_id << " at timestamp: "
+      << timestamp_microseconds << " to " << keyframe_path
       << " total number of key points on this frame: "
       << keyframe.keypoints().size());
   STATUS_OK_OR_RETURN_FALSE(
-    DMFileUtils::Get().WriteProtoFileByExtension(
+    FileUtils::WriteProtoFileByExtension(
       keyframe_path,
       keyframe),
     "Failed to write proto file: " + keyframe_path);

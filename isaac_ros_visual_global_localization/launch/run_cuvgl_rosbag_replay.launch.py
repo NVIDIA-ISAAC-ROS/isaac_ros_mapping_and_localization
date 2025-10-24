@@ -19,26 +19,38 @@ import isaac_ros_launch_utils.all_types as lut
 import isaac_ros_launch_utils as lu
 from ament_index_python.packages import get_package_share_directory
 import os
+from launch.event_handlers import OnProcessExit
 
 # Remap image and camera info topics, we can modify this function to remap other topics if needed.
 MAP_FRAME = "map"
 OMAP_FRAME = "omap"
 
 
-def get_camera_list(camera_names):
-    if lu.is_equal(camera_names, "front"):
-        return ['front_stereo_camera']
-    elif lu.is_equal(camera_names, "front_left"):
-        return ['front_stereo_camera', 'left_stereo_camera']
-    elif lu.is_equal(camera_names, "front_left_right"):
-        return ['front_stereo_camera', 'left_stereo_camera', 'right_stereo_camera']
-    elif lu.is_equal(camera_names, 'front_back_left_right'):
-        return [
-            'front_stereo_camera', 'back_stereo_camera', 'left_stereo_camera',
-            'right_stereo_camera'
-        ]
-    else:
-        return []
+def create_foxglove_topic_whitelist(camera_names: str) -> list[str]:
+    """Create Foxglove topic whitelist based on camera names."""
+    camera_list = camera_names.split(',')
+
+    # Base topics that are always included
+    base_topics = [
+        '/map',
+        '/tf',
+        '/tf_static',
+        '/visual_localization/pose',
+        '/visual_localization/debug_image',
+        '/visual_localization/trigger_localization',
+        '/visual_global_localization/localization_status',
+        '/front_3d_lidar/lidar_points_filtered',
+    ]
+
+    # Add camera-specific topics for each camera
+    camera_topics = []
+    for camera_name in camera_list:
+        camera_topics.extend([
+            f'/{camera_name}/left/image_raw',
+            f'/{camera_name}/left/camera_info',
+        ])
+
+    return base_topics + camera_topics
 
 
 def create_decoder(name: str, identifier: str):
@@ -52,9 +64,9 @@ def create_decoder(name: str, identifier: str):
     return decoder_node
 
 
-def create_decoder_nodes(camera_names):
+def create_decoder_nodes(camera_list: list[str]):
     nodes = []
-    for camera_name in camera_names:
+    for camera_name in camera_list:
         nodes.append(create_decoder(camera_name, 'left'))
         nodes.append(create_decoder(camera_name, 'right'))
     return nodes
@@ -75,41 +87,11 @@ def create_rectify_node(name: str, identifier: str):
     return rectify_node
 
 
-def create_rectify_nodes(camera_names):
+def create_rectify_nodes(camera_list: list[str]):
     nodes = []
-    for camera_name in camera_names:
+    for camera_name in camera_list:
         nodes.append(create_rectify_node(camera_name, 'left'))
         nodes.append(create_rectify_node(camera_name, 'right'))
-    return nodes
-
-
-def create_format_converter_node(name: str, identifier: str, image_format: str,
-                                 rectified_images: bool):
-    remappings = [('image', f'image_{image_format}')]
-    if rectified_images:
-        remappings.append(('image_raw', 'image_rect'))
-    reformat_node = lut.ComposableNode(
-        name=f'reformat_node_{image_format}',
-        package='isaac_ros_image_proc',
-        plugin='nvidia::isaac_ros::image_proc::ImageFormatConverterNode',
-        namespace=f'{name}/{identifier}',
-        parameters=[{
-            'image_width': 1920,
-            'image_height': 1200,
-            'type_negotiation_duration_s': 1,
-            'encoding_desired': image_format,
-        }],
-        remappings=remappings)
-    return reformat_node
-
-
-def create_format_converter_nodes(camera_names, image_format: str, rectified_images: bool):
-    nodes = []
-    for camera_name in camera_names:
-        nodes.append(
-            create_format_converter_node(camera_name, 'left', image_format, rectified_images))
-        nodes.append(
-            create_format_converter_node(camera_name, 'right', image_format, rectified_images))
     return nodes
 
 
@@ -175,6 +157,28 @@ def create_rviz():
     )
 
 
+def create_foxglove_bridge(camera_names: str, send_buffer_limit: int = 10000000):
+    """Create foxglove bridge node with whitelist always applied."""
+    topic_whitelist = create_foxglove_topic_whitelist(camera_names)
+
+    params = [{
+        'send_buffer_limit': send_buffer_limit,
+        'max_qos_depth': 1,
+        'use_compression': False,
+        'capabilities': ['clientPublish', 'connectionGraph', 'assets'],
+        'topic_whitelist': topic_whitelist,
+    }]
+
+    return lut.Node(
+        package='foxglove_bridge',
+        executable='foxglove_bridge',
+        parameters=params,
+        # Use error log level to reduce terminal cluttering from
+        # "send_buffer_limit reached" warnings.
+        arguments=['--ros-args', '--log-level', 'ERROR'],
+    )
+
+
 def create_visualization_actions(args):
     # nodes.append(create_odom_to_base_link())
     actions = []
@@ -188,20 +192,25 @@ def create_visualization_actions(args):
 def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Action]:
     actions = []
 
-    actions.append(
-        lu.include(
-            'isaac_ros_data_replayer',
-            'launch/include/data_replayer_include.launch.py',
-            launch_arguments={
-                'rosbag': args.rosbag_path,
-                'enabled_stereo_cameras': True,
-                'enabled_fisheye_cameras': False,
-                'enable_3d_lidar': args.enable_3d_lidar,
-                'replay_rate': args.replay_rate
-            }))
+    # Use standard ROS2 bag play instead of isaac_ros_data_replayer
+    bag_play_cmd = [
+        'ros2', 'bag', 'play',
+        args.rosbag_path,
+        '--clock',
+        '--rate', str(args.replay_rate),
+    ]
 
-    camera_list = get_camera_list(args.camera_names)
-    camera_names = ','.join(camera_list)
+    # Add --loop flag if replay_shutdown_on_exit is False
+    if not args.replay_shutdown_on_exit:
+        bag_play_cmd.append('--loop')
+
+    bag_play_process = lut.ExecuteProcess(
+        cmd=bag_play_cmd,
+        output='screen'
+    )
+    actions.append(bag_play_process)
+
+    camera_list = args.camera_names.split(',')
 
     rectified_images = False
 
@@ -218,36 +227,34 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Actio
         lu.include('isaac_ros_visual_global_localization',
                    'launch/include/visual_global_localization.launch.py',
                    launch_arguments={
-                       'vgl_enabled_stereo_cameras': camera_names,
+                       'vgl_enabled_stereo_cameras': args.camera_names,
                        'vgl_rectified_images': rectified_images,
                        'container_name': args.container_name,
                    }))
-
-    if args.use_cuvslam:
-        actions.append(
-            lu.include('isaac_ros_perceptor_bringup',
-                       'launch/algorithms/vslam.launch.py',
-                       launch_arguments={
-                           'vslam_enabled_stereo_cameras': camera_names,
-                           'container_name': args.container_name,
-                       }))
 
     actions.append(create_omap_to_map(args.map_to_omap_x_offset, args.map_to_omap_y_offset))
 
     if args.occupancy_map_yaml_file != '':
         actions.extend(create_visualization_actions(args))
 
-    if args.enable_foxglove_bridge:
-        actions.append(
-            lu.include(
-                'isaac_ros_perceptor_bringup',
-                'launch/tools/visualization.launch.py',
-                launch_arguments={'use_foxglove_whitelist': args.use_foxglove_whitelist},
-            ))
-    else:
-        actions.append(create_rviz())
+    if args.enable_visualization:
+        if args.enable_foxglove_bridge:
+            actions.append(create_foxglove_bridge(args.camera_names))
+        else:
+            actions.append(create_rviz())
 
     actions.append(lu.component_container(args.container_name))
+
+    # Add event handler to shutdown the entire launch when bag play finishes
+    # Only add this if replay_shutdown_on_exit is True
+    if args.replay_shutdown_on_exit:
+        bag_exit_handler = lut.RegisterEventHandler(
+            OnProcessExit(
+                target_action=bag_play_process,
+                on_exit=lut.Shutdown(reason='Bag replay finished')
+            )
+        )
+        actions.append(bag_exit_handler)
 
     return actions
 
@@ -257,14 +264,11 @@ def generate_launch_description():
     args = lu.ArgumentContainer()
     args.add_arg(
         'camera_names',
-        default='front_back_left_right',
-        choices=[
-            'front',
-            'front_left',
-            'front_left_right',
-            'front_back_left_right',
-        ],
         cli=True,
+        description=(
+            'Comma-separated list of camera names to use for localization '
+            '(e.g., "front_stereo_camera,left_stereo_camera,right_stereo_camera")'
+        ),
     )
     args.add_arg('container_name', default='visual_localization_container', cli=True)
     args.add_arg(
@@ -277,7 +281,7 @@ def generate_launch_description():
         'rosbag_path',
         cli=True,
         description=(
-            'Path of the rosbag to replay. If set, need to install isaac_ros_data_replayer package'
+            'Path of the rosbag to replay.'
         ))
     args.add_arg(
         'replay_rate',
@@ -299,24 +303,6 @@ def generate_launch_description():
             'If enable image rectification. If set, need to install isaac_ros_image_proc package'),
         default=False)
     args.add_arg(
-        'enable_format_converter',
-        cli=True,
-        description=(
-            'If enable format converter. If set, need to install isaac_ros_image_proc package'),
-        default=False)
-    args.add_arg('enable_3d_lidar',
-                 cli=True,
-                 description='If enable 3d ldiar driver',
-                 default=True)
-    args.add_arg(
-        'use_cuvslam',
-        cli=True,
-        description=(
-            'Whether or not use cuvslam. If set, need to install isaac_ros_perceptor_bringup '
-            'package'),
-        default=False,
-    )
-    args.add_arg(
         'occupancy_map_yaml_file',
         cli=True,
         description='Yaml file for 2d omap. If set, need to install nav2_map_server package',
@@ -337,16 +323,8 @@ def generate_launch_description():
     args.add_arg(
         'enable_foxglove_bridge',
         cli=True,
-        description=(
-            'If enable foxglove bridge. If set, need to install isaac_ros_perceptor_bringup '
-            'package'),
+        description='If enable foxglove bridge.',
         default=False)
-    args.add_arg(
-        'use_foxglove_whitelist',
-        cli=True,
-        description='If use foxglove whitelist',
-        default=True,
-    )
     args.add_arg(
         'vgl_publish_map_to_base_tf',
         cli=True,
@@ -363,6 +341,19 @@ def generate_launch_description():
         'vgl_enable_point_cloud_filter',
         cli=True,
         description='If enable point cloud filter',
+        default=True)
+    args.add_arg(
+        'enable_visualization',
+        cli=True,
+        description='If enable visualization',
+        default=True)
+    args.add_arg(
+        'replay_shutdown_on_exit',
+        cli=True,
+        description=(
+            'If true, exit the launch when replay is done. '
+            'If false, loop the rosbag replay.'
+        ),
         default=True)
     args.add_opaque_function(add_visual_global_localization)
 
