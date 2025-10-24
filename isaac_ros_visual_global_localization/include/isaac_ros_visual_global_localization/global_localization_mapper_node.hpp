@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +32,8 @@
 #include "visual/loop_closing/loop_closure_index.h"
 #include "visual/cusfm/feature_extractor.h"
 
+#include "cuda_runtime.h"  // NOLINT
+
 namespace nvidia
 {
 namespace isaac_ros
@@ -41,6 +43,7 @@ namespace visual_global_localization
 
 using ImageType = nvidia::isaac_ros::nitros::NitrosImageView;
 using CameraInfoType = sensor_msgs::msg::CameraInfo;
+using nvidia::isaac::visual::camera_params_id_t;
 
 class GlobalLocalizationMapperNode : public rclcpp::Node
 {
@@ -62,12 +65,12 @@ public:
   void setupTimers();
 
   // Callback function for nitros images
-  void inputImageCallback(const ImageType & image_msg, int camera_id);
+  void inputImageCallback(const ImageType & image_msg, camera_params_id_t camera_id);
 
   // Callback function for camera info
   void inputCameraInfoCallback(
     const CameraInfoType::ConstSharedPtr & camera_info_msg,
-    uint32_t camera_id);
+    camera_params_id_t camera_id);
 
   void callbackSynchronizedImages(
     const std::vector<std::pair<int, ImageType>> & idx_and_image_mgs);
@@ -92,7 +95,7 @@ public:
 
   bool saveKeyframeToDisk(
     const std::string & frame_id,
-    size_t sample_id,
+    uint64_t timestamp_microseconds,
     const protos::visual::general::Keyframe & keyframe);
 
   nvidia::isaac::common::image::MonoCameraCalibrationParams
@@ -157,6 +160,8 @@ private:
   std::unordered_map<std::string,
     nvidia::isaac::common::image::MonoCameraCalibrationParams> camera_params_;
   std::unordered_map<std::string, Transform> camera_transforms_;
+  // CUDA stream to process dynamics detection on
+  cudaStream_t cuda_stream_;
 };
 
 } // namespace visual_global_localization

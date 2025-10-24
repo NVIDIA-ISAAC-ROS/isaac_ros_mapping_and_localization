@@ -1,0 +1,21 @@
+depth_cameras:
+  - name: front_camera
+    color: /front_camera/color/image_raw
+    color_camera_info: /front_camera/color/camera_info
+    depth: /front_camera/depth/image_rect_raw
+    depth_camera_info: /front_camera/depth/camera_info
+  - name: rear_camera
+    color: /rear_camera/color/image_raw
+    color_camera_info: /rear_camera/color/camera_info
+    depth: /rear_camera/depth/image_rect_raw
+    depth_camera_info: /rear_camera/depth/camera_info
+  - name: left_camera
+    color: /left_camera/color/image_raw
+    color_camera_info: /left_camera/color/camera_info
+    depth: /left_camera/depth/image_rect_raw
+    depth_camera_info: /left_camera/depth/camera_info
+  - name: right_camera
+    color: /right_camera/color/image_raw
+    color_camera_info: /right_camera/color/camera_info
+    depth: /right_camera/depth/image_rect_raw
+    depth_camera_info: /right_camera/depth/camera_info

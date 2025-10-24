@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,33 +38,29 @@ find_package(ament_cmake_auto REQUIRED)
 
 ament_auto_find_build_dependencies()
 
+# Ensure CUDA imported targets (e.g., CUDA::nvtx3) are available
+find_package(CUDAToolkit REQUIRED)
+
 # Dependencies
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(gflags REQUIRED)
 
-# find those dependency again just to make sure if those are not missing slitenly
-# in ament_auto_find_build_dependencies
-find_package(isaac_ros_nitros REQUIRED)
-find_package(isaac_ros_managed_nitros REQUIRED)
-find_package(isaac_ros_nitros_image_type REQUIRED)
-find_package(isaac_mapping_ros REQUIRED)
-find_package(isaac_common REQUIRED)
-find_package(isaac_ros_common REQUIRED)
-find_package(isaac_ros_apriltag_interfaces REQUIRED)
+# NVTX
+option(USE_NVTX "Enable NVTX markers for improved profiling (if available)" ON)
 
-include_directories(${isaac_common_INCLUDE_DIRS})
+if(USE_NVTX)
+  add_definitions(-DUSE_NVTX)
+  link_directories("${CUDA_TOOLKIT_ROOT_DIR}/lib64")
+  link_libraries("CUDA::nvtx3")
+endif()
 
 ament_auto_add_library(
   transform_manager SHARED
   src/transform_manager.cpp
 )
 
-target_link_libraries(
-  transform_manager
-  isaac_mapping_ros::common
-)
-
 ament_target_dependencies(transform_manager
+  isaac_ros_visual_mapping
   Eigen3
   rclcpp
   tf2_ros
@@ -72,7 +68,7 @@ ament_target_dependencies(transform_manager
   nav_msgs
 )
 
-# visual Localization
+# visual_mapping_visual Localization
 ament_auto_add_library(
   visual_global_localization_node SHARED
   src/visual_global_localization_node.cpp
@@ -82,8 +78,6 @@ target_link_libraries(
   visual_global_localization_node
   transform_manager
   gflags
-  isaac_mapping_ros::common
-  isaac_mapping_ros::visual
 )
 
 # isaac_ros_visual_global_localization executable
@@ -116,8 +110,6 @@ target_link_libraries(
   apriltag_localization_node
   transform_manager
   gflags
-  isaac_mapping_ros::common
-  isaac_mapping_ros::visual
 )
 
 # isaac_ros_apriltag_localization executable
@@ -143,8 +135,6 @@ target_link_libraries(
   global_localization_mapper_node
   transform_manager
   gflags
-  isaac_mapping_ros::common
-  isaac_mapping_ros::visual
 )
 
 ament_auto_add_executable(${ISAAC_ROS_GLOBAL_LOCALIZATION_MAPPER_NAME}
@@ -181,10 +171,6 @@ ament_target_dependencies(point_cloud_filter_node
 ament_auto_add_executable(${ISAAC_ROS_POINT_CLOUD_FILTER_NAME}
   src/point_cloud_filter_main.cpp
 )
-
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/isaac_mapping/generated)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 rclcpp_components_register_nodes(visual_global_localization_node "nvidia::isaac_ros::visual_global_localization::VisualGlobalLocalizationNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::visual_global_localization::VisualGlobalLocalizationNode;$<TARGET_FILE:visual_global_localization_node>\n")
@@ -229,14 +215,9 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rviz
-  DESTINATION share/${PROJECT_NAME})
-
-
 # Embed versioning information into installed files
 ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
 include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
 generate_version_info(${PROJECT_NAME})
 
-ament_auto_package(INSTALL_TO_SHARE launch)
+ament_auto_package(INSTALL_TO_SHARE launch config rviz)

@@ -17,7 +17,7 @@
 
 #include "isaac_ros_visual_global_localization/apriltag_localization_node.hpp"
 #include "isaac_ros_visual_global_localization/constants.h"
-#include "common/file_utils/dm_file_utils.h"
+#include "common/file_utils/file_utils.h"
 
 namespace nvidia
 {
@@ -83,8 +83,8 @@ void AprilTagLocalizationNode::getParameters()
   }
   if (enable_localizer_) {
     const std::string observations_file =
-      isaac::common::file_utils::DMFileUtils::Get().JoinPath(map_dir_, kObservationsFileName);
-    if (!isaac::common::file_utils::DMFileUtils::Get().FileExists(observations_file)) {
+      isaac::common::file_utils::FileUtils::JoinPath(map_dir_, kObservationsFileName);
+    if (!isaac::common::file_utils::FileUtils::FileExists(observations_file)) {
       RCLCPP_ERROR(
         get_logger(),
         "enable_localizer is true but observations_file does not exist!");
@@ -295,8 +295,8 @@ bool AprilTagLocalizationNode::saveObservationsToDisk()
     (*observation_map.mutable_tag_observations())[id_to_observations.first] = observation_list;
   }
   const std::string observations_file =
-    isaac::common::file_utils::DMFileUtils::Get().JoinPath(map_dir_, kObservationsFileName);
-  if (isaac::common::file_utils::DMFileUtils::Get().WriteProtoFileByExtension(
+    isaac::common::file_utils::FileUtils::JoinPath(map_dir_, kObservationsFileName);
+  if (isaac::common::file_utils::FileUtils::WriteProtoFileByExtension(
       observations_file, observation_map) != absl::OkStatus())
   {
     RCLCPP_ERROR(get_logger(), "Failed to save observations to disk!");
@@ -308,11 +308,11 @@ bool AprilTagLocalizationNode::saveObservationsToDisk()
 bool AprilTagLocalizationNode::loadObservationsFromDisk()
 {
   RCLCPP_INFO_STREAM(get_logger(), "AprilTagLocalizationNode Loading observations from disk");
-  const std::string tag_map_path = isaac::common::file_utils::DMFileUtils::Get().JoinPath(
+  const std::string tag_map_path = isaac::common::file_utils::FileUtils::JoinPath(
     map_dir_, kObservationsFileName);
 
   protos::apriltag::AprilTagObservationMap observation_map;
-  if (isaac::common::file_utils::DMFileUtils::Get().ReadProtoFileByExtension(
+  if (isaac::common::file_utils::FileUtils::ReadProtoFileByExtension(
       tag_map_path, &observation_map) != absl::OkStatus())
   {
     RCLCPP_ERROR(get_logger(), "Failed to load observations from disk !");

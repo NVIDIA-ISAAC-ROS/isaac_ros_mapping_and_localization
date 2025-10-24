@@ -1,0 +1,8 @@
+stereo_cameras:
+  - name: front_stereo_camera
+    left: /oak_cam4/left/image_raw/compressed
+    left_camera_info: /oak_cam4/left/camera_info
+    right: /oak_cam4/right/image_raw/compressed
+    right_camera_info: /oak_cam4/right/camera_info
+    is_camera_rectified: false  # Images are already rectified - skip rectification
+    swap_rb_channels: false    # Images are in RGB format (OpenCV default)

@@ -22,13 +22,15 @@ reserved.
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_visual_global_localization</name>
-  <version>3.2.5</version>
-  <description>A package that camera based global localization</description>
+  <version>4.0.0</version>
+  <description>A package that provides camera based global localization</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
   <license>Apache-2.0</license>
   <url type="website">https://developer.nvidia.com/isaac-ros/</url>
+  <author>Yuchen Deng</author>
   <author>Gang Huang</author>
+  <author>Di Zeng</author>
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
@@ -44,11 +46,12 @@ reserved.
   <depend>nav_msgs</depend>
   <depend>std_srvs</depend>
   <depend>cv_bridge</depend>
+  <depend>nlohmann_json</depend>
   <depend>isaac_common</depend>
   <depend>isaac_ros_nitros</depend>
   <depend>isaac_ros_managed_nitros</depend>
   <depend>isaac_ros_nitros_image_type</depend>
-  <depend>isaac_mapping_ros</depend>
+  <depend>isaac_ros_visual_mapping</depend>
   <depend>isaac_ros_common</depend>
   <depend>libopencv-dev</depend>
   <depend>libgflags-dev</depend>
@@ -60,7 +63,6 @@ reserved.
   <exec_depend>isaac_ros_image_proc</exec_depend>
   <exec_depend>isaac_ros_launch_utils</exec_depend>
   <exec_depend>isaac_ros_apriltag</exec_depend>
-  <exec_depend>isaac_ros_data_replayer</exec_depend>
   <exec_depend>rviz2</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>

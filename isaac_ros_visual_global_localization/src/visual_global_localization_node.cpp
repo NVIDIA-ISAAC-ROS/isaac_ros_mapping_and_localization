@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,16 +22,18 @@
 #include <thread>
 
 #include "rclcpp/serialization.hpp"
-#include <cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.hpp>
 #include <cuda_runtime.h>
 
+#include "isaac_ros_common/cuda_stream.hpp"
 #include "isaac_ros_common/qos.hpp"
 #include "common/datetime/timer.h"
-#include "common/file_utils/dm_file_utils.h"
+#include "common/file_utils/file_utils.h"
 #include "common/image/image_calibration_params.h"
 #include "isaac_ros_visual_global_localization/constants.h"
 #include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
 #include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
+#include "protos/common/sensor/camera_sensor.pb.h"
 
 namespace nvidia
 {
@@ -73,6 +75,11 @@ VisualGlobalLocalizationNode::VisualGlobalLocalizationNode(const rclcpp::NodeOpt
 : Node("visual_localization", options),
   transform_manager_(this)
 {
+  // Add CUDA stream support so that this node does not block the default stream
+  CHECK_CUDA_ERROR(::nvidia::isaac_ros::common::initNamedCudaStream(
+    cuda_stream_, "isaac_ros_visual_global_localization"),
+    "Error initializing CUDA stream");
+
   getParameters();
   // Initialize the localizer API
   initLocalizerApi();
@@ -123,7 +130,9 @@ void VisualGlobalLocalizationNode::getParameters()
   verbose_logging_ = declare_parameter<bool>("verbose_logging", verbose_logging_);
   init_glog_ = declare_parameter<bool>("init_glog", init_glog_);
   glog_v_ = declare_parameter<int>("glog_v", glog_v_);
-  localization_precision_level_ = declare_parameter<int>("localization_precision_level", localization_precision_level_);
+  localization_precision_level_ = declare_parameter<int>(
+    "localization_precision_level",
+    localization_precision_level_);
   transform_manager_.set_reference_frame(base_frame_);
   // Check if the parameters are set correctly
   if (config_dir_.empty()) {
@@ -162,16 +171,16 @@ void VisualGlobalLocalizationNode::getParameters()
 void VisualGlobalLocalizationNode::initLocalizerApi()
 {
   // Check if the map and config directories exist
-  if (!isaac::common::file_utils::DMFileUtils::Get().DirectoryExists(map_dir_)) {
+  if (!isaac::common::file_utils::FileUtils::DirectoryExists(map_dir_)) {
     RCLCPP_ERROR_STREAM(get_logger(), "Map directory does not exist: " << map_dir_);
   }
-  if (!isaac::common::file_utils::DMFileUtils::Get().DirectoryExists(config_dir_)) {
+  if (!isaac::common::file_utils::FileUtils::DirectoryExists(config_dir_)) {
     RCLCPP_ERROR_STREAM(get_logger(), "Config directory does not exist: " << config_dir_);
   }
 
   // If the model directory is set, check if it exists
   if (!model_dir_.empty()) {
-    if (!isaac::common::file_utils::DMFileUtils::Get().DirectoryExists(model_dir_)) {
+    if (!isaac::common::file_utils::FileUtils::DirectoryExists(model_dir_)) {
       RCLCPP_ERROR_STREAM(get_logger(), "Model directory does not exist: " << model_dir_);
     }
   }
@@ -470,7 +479,9 @@ bool VisualGlobalLocalizationNode::processImages(
   return true;
 }
 
-void VisualGlobalLocalizationNode::inputImageCallback(const ImageType & image_msg, int camera_id)
+void VisualGlobalLocalizationNode::inputImageCallback(
+  const ImageType & image_msg,
+  camera_params_id_t camera_id)
 {
   if (!trigger_localization_) {
     // clear buffers just in case if previous run didn't clear it
@@ -509,7 +520,7 @@ cameraInfoToMonoParams(
 
 void VisualGlobalLocalizationNode::inputCameraInfoCallback(
   const CameraInfoType::ConstSharedPtr & camera_info_ptr,
-  uint32_t camera_id)
+  camera_params_id_t camera_id)
 {
   const auto & camera_info_msg = *camera_info_ptr;
   if (camera_params_.count(camera_info_msg.header.frame_id) == 1) {
@@ -555,7 +566,11 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
   isaac::common::transform::SE3TransformD baselink_T_camera;
   convertEigenToTransform(baselink_T_camera_eigen, baselink_T_camera);
 
-  const auto status = cuvgl_->AddCamera(camera_id, baselink_T_camera, params);
+  protos::common::sensor::CameraSensor sensors;
+  sensors.mutable_calibration_parameters()->CopyFrom(params.ToProto());
+  sensors.set_camera_projection_model_type(protos::common::sensor::CameraProjectionModelType::RECTIFIED);
+
+  const auto status = cuvgl_->AddCamera(camera_id, baselink_T_camera, sensors);
   if (!status.ok()) {
     RCLCPP_ERROR_STREAM(
       get_logger(), "Failed to add camera due to " << status.message());
@@ -580,7 +595,7 @@ bool VisualGlobalLocalizationNode::checkImageRectifier(
 
 bool VisualGlobalLocalizationNode::convertImageMessage(
   const std::shared_ptr<ImageType> & image,
-  uint32_t sensor_id,
+  camera_params_id_t sensor_id,
   isaac::visual::cuvgl::CameraImage & camera_image)
 {
   // Convert the NitrosImage to sensor_msgs::msg::Image
@@ -593,13 +608,23 @@ bool VisualGlobalLocalizationNode::convertImageMessage(
   img_msg.encoding = image->GetEncoding();
   img_msg.step = image->GetSizeInBytes() / image->GetHeight();
   img_msg.data.resize(image->GetSizeInBytes());
-  cudaMemcpy(
-    img_msg.data.data(), image->GetGpuData(),
-    image->GetSizeInBytes(), cudaMemcpyDefault);
+  // Use stream and convert to Async ?
+  if (cudaMemcpyAsync(img_msg.data.data(), image->GetGpuData(),
+                      image->GetSizeInBytes(), cudaMemcpyDefault,
+                      cuda_stream_) != cudaSuccess)
+  {
+    RCLCPP_ERROR(get_logger(), "Failed to copy image data");
+    return false;
+  }
+
+  if (cudaStreamSynchronize(cuda_stream_) != cudaSuccess) {
+    RCLCPP_ERROR(get_logger(), "Failed to synchronize stream");
+    return false;
+  }
 
   // Note: the image is only support in RGB8/BGR8 format. Check CameraFrameToMat in camera_data_utils.cc
-  cv_bridge::CvImagePtr rgb_cv_ptr =
-    cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
+  cv_bridge::CvImagePtr bgr_cv_ptr =
+    cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
   if (enable_rectify_images_) {
     if (image_rectifiers_[image->GetFrameId()] == nullptr) {
       RCLCPP_ERROR(get_logger(), "Image rectifier is not initialized");
@@ -607,17 +632,17 @@ bool VisualGlobalLocalizationNode::convertImageMessage(
     }
     // Rectify the image
     cv::Mat rectified_image;
-    image_rectifiers_[image->GetFrameId()]->Rectify(rgb_cv_ptr->image, rectified_image);
-    rgb_cv_ptr->image = rectified_image;
+    image_rectifiers_[image->GetFrameId()]->Rectify(bgr_cv_ptr->image, rectified_image);
+    bgr_cv_ptr->image = rectified_image;
 
     if (publish_rectified_images_) {
-      rectified_image_pubs_[sensor_id]->publish(*(rgb_cv_ptr->toImageMsg()));
+      rectified_image_pubs_[sensor_id]->publish(*(bgr_cv_ptr->toImageMsg()));
       rectified_camera_info_pubs_[sensor_id]->publish(rectified_camera_infos_[image->GetFrameId()]);
     }
   }
 
-  camera_image.camera_id = sensor_id;
-  camera_image.image = rgb_cv_ptr->image;
+  camera_image.camera_params_id = sensor_id;
+  camera_image.image = bgr_cv_ptr->image;
   camera_image.timestamp_microseconds = GetImageTimestampInMicros(*image);
   return true;
 }

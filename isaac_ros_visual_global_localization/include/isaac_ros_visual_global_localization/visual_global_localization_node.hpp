@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2021-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +39,8 @@
 #include "visual/cuvgl/cuvgl.h"
 #include "std_srvs/srv/trigger.hpp"
 
+#include "cuda_runtime.h"  // NOLINT - include .h without directory
+
 namespace nvidia
 {
 namespace isaac_ros
@@ -55,6 +57,7 @@ using OdomType = nav_msgs::msg::Odometry;
 
 using DiagnosticArrayType = diagnostic_msgs::msg::DiagnosticArray;
 using DiagnosticStatusType = diagnostic_msgs::msg::DiagnosticStatus;
+using nvidia::isaac::visual::camera_params_id_t;
 
 class VisualGlobalLocalizationNode : public rclcpp::Node
 {
@@ -77,11 +80,11 @@ public:
     std::shared_ptr<ImageType>> & images) const;
 
   // Callback function for nitros images
-  void inputImageCallback(const ImageType & image_msg, int camera_id);
+  void inputImageCallback(const ImageType & image_msg, camera_params_id_t camera_id);
   // Callback function for camera info
   void inputCameraInfoCallback(
     const CameraInfoType::ConstSharedPtr & camera_info_msg,
-    uint32_t camera_id);
+    camera_params_id_t camera_id);
   // Callback function for service trigger global localization
   void callbackSrvTriggerGlobalLocalization(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
@@ -100,7 +103,7 @@ public:
 protected:
   bool convertImageMessage(
     const std::shared_ptr<ImageType> & image,
-    uint32_t sensor_id,
+    camera_params_id_t sensor_id,
     isaac::visual::cuvgl::CameraImage & camera_image);
 
   nvidia::isaac::common::image::MonoCameraCalibrationParams
@@ -182,7 +185,7 @@ protected:
   // stereo camera ids for stereo localizer, separated by comma.
   std::string stereo_localizer_cam_ids_ = "";
   // camera frame-id string -> camera-id
-  std::map<std::string, size_t> camera_frame_id_to_camera_ids_;
+  std::map<std::string, camera_params_id_t> camera_frame_id_to_camera_ids_;
 
   // if use_initial_guess is true, the localizer will do cuSFM-based localization
   // If it is false, the localizer will do global localization
@@ -240,6 +243,9 @@ protected:
 
   // The published localization pose count
   int num_published_poses_ = 0;
+
+  // CUDA stream to process dynamics detection on
+  cudaStream_t cuda_stream_;
 };
 }  // namespace visual_global_localization
 }  // namespace isaac_ros
