@@ -22,7 +22,7 @@ reserved.
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_visual_global_localization</name>
-  <version>4.0.0</version>
+  <version>4.1.0</version>
   <description>A package that provides camera based global localization</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -58,6 +58,8 @@ reserved.
 
   <build_depend>isaac_ros_apriltag_interfaces</build_depend>
 
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>isaac_ros_visual_slam</exec_depend>
   <exec_depend>isaac_ros_h264_decoder</exec_depend>
   <exec_depend>isaac_ros_image_proc</exec_depend>

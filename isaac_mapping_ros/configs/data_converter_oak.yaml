@@ -6,3 +6,9 @@ stereo_cameras:
     right_camera_info: /oak_cam4/right/camera_info
     is_camera_rectified: false  # Images are already rectified - skip rectification
     swap_rb_channels: false    # Images are in RGB format (OpenCV default)
+# depth_cameras:
+#   - name: front_camera
+#     color: /oak/rgb/image_raw
+#     color_camera_info: /oak/rgb/camera_info
+#     is_camera_rectified: false
+#     swap_rb_channels: false

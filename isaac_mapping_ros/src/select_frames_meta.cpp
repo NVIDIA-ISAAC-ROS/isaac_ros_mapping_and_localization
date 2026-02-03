@@ -19,7 +19,7 @@
 #include <glog/logging.h>
 
 #include "common/file_utils/file_utils.h"
-#include "visual/cusfm/data_selector.h"
+#include "visual/general/data_selector.h"
 #include "visual/utils/types.h"
 #include "protos/visual/general/keyframe_metadata.pb.h"
 
@@ -88,7 +88,7 @@ int main(int argc, char ** argv)
     }
   }
 
-  const auto & selected_timestamps = visual::cusfm::DataSelector::SelectKeyFramesByPose(
+  const auto & selected_timestamps = visual::general::DataSelector::SelectKeyFramesByPose(
     timestamp_to_pose, FLAGS_min_inter_frame_distance, FLAGS_min_inter_frame_rotation_degrees);
 
   std::set<uint64_t> selected_sample_ids;

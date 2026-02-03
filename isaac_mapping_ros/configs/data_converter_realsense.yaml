@@ -1,8 +1,8 @@
 stereo_cameras:
-  - name: front_camera
-    left: /camera0/realsense_splitter_node/output/infra_1
-    left_camera_info: /camera0/infra1/camera_info
-    left_frame_id: camera0_infra1_optical_frame
-    right: /camera0/realsense_splitter_node/output/infra_2
-    right_camera_info: /camera0/infra2/camera_info
-    right_frame_id: camera0_infra2_optical_frame
+  - name: front_stereo_camera
+    left: /realsense/left/image_rect/compressed
+    left_camera_info: /realsense/left/camera_info_rect
+    left_frame_id: realsense_infra1_optical_frame
+    right: /realsense/right/image_rect/compressed
+    right_camera_info: /realsense/right/camera_info_rect
+    right_frame_id: realsense_infra2_optical_frame

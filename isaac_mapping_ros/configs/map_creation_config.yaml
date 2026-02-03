@@ -1,0 +1,109 @@
+nvblox:
+  # Projective integrator settings
+  projective_integrator_max_integration_distance_m: 2.5
+
+  # ESDF slice settings
+  esdf_slice_min_height: 0.09
+  esdf_slice_max_height: 0.65
+  esdf_slice_height: 0.3 # not used in 3d ESDF mode
+  use_2d_esdf_mode: false
+
+  # Workspace bounds settings
+  workspace_bounds_type: 1 # 1 = WORKSPACE_BOUNDS_TYPE_HEIGHT_BOUNDS
+  workspace_bounds_min_height_m: -0.3
+  workspace_bounds_max_height_m: 2.0
+
+  # Mapping type
+  mapping_type_dynamic: true
+  mapping_type_static_occupancy: false
+
+  # Mesh output settings
+  fit_to_z0: true
+
+# cuVSLAM configuration
+cuvslam:
+  # ============================================================================
+  # CORE SLAM SETTINGS
+  # ============================================================================
+  cfg_enable_slam: true # Enable localization and mapping
+  ros_frame_conversion: true # Convert input/output poses from/to ROS frame
+  print_format: tum # Format of output poses (options: matrix, tum)
+
+  # ============================================================================
+  # PERFORMANCE & THROTTLING
+  # ============================================================================
+  max_fps: 0 # Throttle main loop to not exceed max_fps. 0 (default) to disable
+  verbosity: 15 # Verbosity level (default: 2, range: 0-10+)
+
+  # ============================================================================
+  # IMAGE PROCESSING & QUALITY
+  # ============================================================================
+  cfg_denoising: false # Enable image denoising (matches navigation: enable_image_denoising: False)
+  cfg_max_frame_delta_s: 0.034 # Set maximum camera frame time in seconds (matches navigation: image_jitter_threshold_ms: 34.0)
+  cfg_horizontal: false # Enable tracking for rectified cameras with principal points on horizontal line (Oak uses unrectified)
+
+  # ============================================================================
+  # IMAGE MASKING (matches navigation VSLAM img_mask_* parameters)
+  # ============================================================================
+  border_bottom: 0 # Bottom border to ignore in pixels (navigation: img_mask_bottom: 30)
+  border_left: 0 # Left border to ignore in pixels (navigation: img_mask_left: 150)
+  border_right: 0 # Right border to ignore in pixels (navigation: img_mask_right: 30)
+  border_top: 0 # Top border to ignore in pixels (0 to use full frame)
+
+  # ============================================================================
+  # SLAM ALGORITHM CONFIGURATION
+  # ============================================================================
+  cfg_multicam_mode: 2 # Multicamera mode: moderate (0), performance (1) or precision (2)
+  cfg_odom_mode: 0 # Odometry mode: Multicamera (0), Inertial (1), RGBD (2)
+  cfg_planar: true # Slam poses are so that camera moves on horizontal plane (default: false)
+  cfg_slam_max_map_size: 300 # Maximum numbers of poses in SLAM pose graph, 0 means unlimited
+  cfg_sync_slam: true # Run localization and mapping in same thread with visual odometry
+
+  # ============================================================================
+  # PROCESSING & ERROR HANDLING
+  # ============================================================================
+  ignore_tracking_errors: false # Don't stop on tracking errors
+  repeat: 1 # Number of repetitions of the dataset
+  start_frame: 0 # Frame to start with
+  cache_uncompressed: false # Cache uncompressed images
+
+  # ============================================================================
+  # DEPTH CAMERA SETTINGS (for RGBD mode)
+  # ============================================================================
+  cfg_enable_depth_stereo_tracking: false # Enable depth stereo tracking
+  cfg_depth_camera: 0 # Depth camera index
+  cfg_depth_scale_factor: 1.0 # Depth scale factor
+
+  # ============================================================================
+  # EXPORT & DEBUG SETTINGS
+  # ============================================================================
+  cfg_enable_export: false # Enable export of observations & landmarks
+  debug_dump: false # Enable debug dump (saves to <map_dir>/logs when true)
+  shuttle: false # Shuttle replay forward and backward
+
+  # ============================================================================
+  # LOCALIZATION SETTINGS (for localization mode)
+  # ============================================================================
+  loc_input_map: "" # Path to input map (cuVSLAM will try to localize in it)
+  loc_input_hints: "" # Path to hint data for localization (format: `timestamp x y z`)
+  loc_hint_ts_format: "detect" # Localization hint timestamp format (options: detect, int, float)
+  loc_hint_noise: 0.0 # Introduce noise to hints (uniform, max deviation in meters)
+  loc_random_rot: false # Randomize hint rotation
+  loc_retries: 0 # Number of retries if localization fails
+  loc_skip_frames: 0 # Number of frames to skip after previous localization
+  loc_start_frame: 0 # Start frame for localization
+  localize_forever: false # Run localization continuously (each time previous call finished)
+  localize_wait: false # Wait for localization to finish
+  print_nan_on_failure: false # Print a NaN pose when the localization failed
+
+  # ============================================================================
+  # CAMERA SELECTION (advanced)
+  # ============================================================================
+  cameras: "" # Comma-separated list of cameras (empty uses all)
+
+# Future config sections can be added here:
+# edex:
+#   # EDEX-specific parameters
+#
+# depth:
+#   # Depth inference parameters

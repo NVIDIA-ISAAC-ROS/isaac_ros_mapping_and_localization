@@ -144,14 +144,9 @@ public:
     return paired_camera_name_;
   }
 
-  void set_is_depth_image(bool is_depth_image)
-  {
-    is_depth_image_ = is_depth_image;
-  }
-
   bool is_depth_image() const
   {
-    return is_depth_image_;
+    return camera_params_.chroma() == protos::common::sensor::CameraSensor::DEPTH;
   }
 
   void set_is_camera_rectified(bool is_camera_rectified)
@@ -183,7 +178,6 @@ private:
   protos::common::sensor::CameraSensor camera_params_;
 
   bool has_camera_params_ = false;
-  bool is_depth_image_ = false;
   bool is_camera_rectified_ = false;
   bool swap_rb_channels_ = false;
 

@@ -31,6 +31,7 @@ find_package(urdf REQUIRED)
 find_package(gflags REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(glog REQUIRED)
+find_package(isaac_ros_visual_mapping REQUIRED)
 
 pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale)
 
@@ -43,7 +44,6 @@ target_include_directories(video_decoder PUBLIC
 ament_target_dependencies(video_decoder OpenCV rosbag2_cpp sensor_msgs)
 target_link_libraries(video_decoder ${FFMPEG_LIBRARIES})
 
-# Data Converter Utils
 add_library(data_converter_utils SHARED src/data_converter_utils.cpp)
 target_include_directories(data_converter_utils PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -51,15 +51,6 @@ target_include_directories(data_converter_utils PUBLIC
 )
 target_link_libraries(data_converter_utils video_decoder yaml-cpp)
 ament_target_dependencies(data_converter_utils nav_msgs urdf OpenCV rosbag2_cpp sensor_msgs tf2_ros cv_bridge isaac_ros_visual_mapping)
-
-# Nvblox Utils
-add_library(nvblox_utils SHARED src/lib/nvblox_utils/mapping_data_loader.cpp)
-ament_target_dependencies(nvblox_utils OpenCV)
-target_include_directories(nvblox_utils PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(nvblox_utils nvblox::nvblox_datasets)
 
 # rosbag_to_mapping_data binary
 ament_auto_add_executable(rosbag_to_mapping_data src/rosbag_to_mapping_data.cpp)
@@ -103,17 +94,6 @@ set_target_properties(decode_video PROPERTIES
   BUILD_RPATH_USE_ORIGIN TRUE
   INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-# run_nvblox binary
-ament_auto_add_executable(run_nvblox src/run_nvblox.cpp)
-target_link_libraries(run_nvblox nvblox_utils)
-ament_target_dependencies(run_nvblox nvblox_ros)
-
-# This is needed for the binary to find GXF related libs on aarch64
-set_target_properties(run_nvblox PROPERTIES
-  BUILD_WITH_INSTALL_RPATH TRUE
-  BUILD_RPATH_USE_ORIGIN TRUE
-  INSTALL_RPATH_USE_LINK_PATH TRUE)
-
 # select_frames_meta binary
 ament_auto_add_executable(select_frames_meta src/select_frames_meta.cpp)
 ament_target_dependencies(select_frames_meta isaac_ros_visual_mapping)
@@ -135,7 +115,7 @@ install(
 
 # Install the library and headers
 install(
-  TARGETS data_converter_utils video_decoder nvblox_utils
+  TARGETS data_converter_utils video_decoder
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -147,12 +127,15 @@ install(PROGRAMS
   scripts/run_ess_trt_offline.py
   scripts/run_foundationstereo_trt_offline.py
   scripts/create_map_offline.py
+  scripts/create_map_utils.py
+  scripts/rectify_images_offline.py
+  scripts/pose_plane_fit.py
   scripts/stereo_inference_base.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(ament_cmake nvblox nvblox_ros)
+ament_export_dependencies(ament_cmake nlohmann_json nvblox nvblox_ros)
 
 # Embed versioning information into installed files
 ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)

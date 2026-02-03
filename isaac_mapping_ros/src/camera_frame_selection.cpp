@@ -25,7 +25,7 @@
 #include "common/datetime/time_utils.h"
 #include "common/file_utils/file_utils.h"
 
-#include "visual/cusfm/data_selector.h"
+#include "visual/general/data_selector.h"
 #include "visual/general/keyframe_metadata.h"
 #include "visual/utils/keyframe_utils.h"
 
@@ -122,7 +122,7 @@ int main(int argc, char ** argv)
       sample_id_to_synced_sample_id,
       sample_id_to_pose);
 
-    std::vector<uint64_t> selected_frames = visual::cusfm::DataSelector::SelectKeyFramesByPose(
+    std::vector<uint64_t> selected_frames = visual::general::DataSelector::SelectKeyFramesByPose(
       sample_id_to_pose, FLAGS_min_inter_frame_distance, FLAGS_min_inter_frame_rotation_degrees);
 
     std::vector<uint64_t> selected_timestamps;

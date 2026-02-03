@@ -31,6 +31,8 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> List[Action]:
             launch_arguments={
                 'vgl_enabled_stereo_cameras': args.camera_names,
                 'container_name': args.container_name,
+                'vgl_enable_continuous_localization': args.vgl_enable_continuous_localization,
+                'vgl_rectified_images': args.vgl_rectified_images,
             }
         )
     )
@@ -40,7 +42,7 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> List[Action]:
 
 
 def generate_launch_description():
-    """Replay a rosbag and decompress the images from the front stereo camera."""
+    """Launch the visual global localization node."""
     args = lu.ArgumentContainer()
     args.add_arg(
         'camera_names',
@@ -52,6 +54,18 @@ def generate_launch_description():
         'container_name',
         default='visual_localization_container',
         cli=True
+    )
+    args.add_arg(
+        'vgl_enable_continuous_localization',
+        default=True,
+        cli=True,
+        description='If enable continuous localization',
+    )
+    args.add_arg(
+        'vgl_rectified_images',
+        default=True,
+        cli=True,
+        description='If the received images are rectified',
     )
     args.add_opaque_function(add_visual_global_localization)
 

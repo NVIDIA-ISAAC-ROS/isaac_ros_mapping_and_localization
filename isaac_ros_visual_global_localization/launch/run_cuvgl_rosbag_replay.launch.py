@@ -272,12 +272,6 @@ def generate_launch_description():
     )
     args.add_arg('container_name', default='visual_localization_container', cli=True)
     args.add_arg(
-        'localization_mode',
-        default='visual_localization',
-        choices=['visual_localization', 'apriltag_localization', 'global_localization_mapper'],
-        cli=True,
-    )
-    args.add_arg(
         'rosbag_path',
         cli=True,
         description=(

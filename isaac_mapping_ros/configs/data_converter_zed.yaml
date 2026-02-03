@@ -1,0 +1,8 @@
+stereo_cameras:
+  - name: zed
+    left: /zed/left/image_rect/compressed
+    left_camera_info: /zed/left/camera_info_rect
+    right: /zed/right/image_rect/compressed
+    right_camera_info: /zed/right/camera_info_rect
+    is_camera_rectified: true  # Images are already rectified - skip rectification
+    swap_rb_channels: false    # Images are in RGB format (OpenCV default)

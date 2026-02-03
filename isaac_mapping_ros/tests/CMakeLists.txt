@@ -9,10 +9,6 @@ ament_lint_auto_find_test_dependencies()
 # Copy test data into the testing space (build/tests)
 file(INSTALL "${CMAKE_CURRENT_SOURCE_DIR}/data" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}")
 
-add_executable(mapping_data_loader_test mapping_data_loader_test.cpp)
-target_link_libraries(mapping_data_loader_test nvblox_utils gtest gtest_main)
-add_test(NAME mapping_data_loader_test COMMAND mapping_data_loader_test)
-
 get_isaac_ros_asset_install_script_path(install_ess_models_script install_ess_models isaac_ros_ess_models_install)
 ament_add_test(setup_ess_models
     COMMAND "${install_ess_models_script}"

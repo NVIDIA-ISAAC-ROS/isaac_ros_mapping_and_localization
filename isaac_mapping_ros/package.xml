@@ -22,7 +22,7 @@ reserved.
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_mapping_ros</name>
-  <version>4.0.0</version>
+  <version>4.1.0</version>
   <description>A thin ROS layer that wraps isaac ros mapping and localization core repo</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -33,6 +33,7 @@ reserved.
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
   <build_depend>isaac_ros_common</build_depend>
 
+  <depend>libgoogle-glog-dev</depend>
   <depend>libgflags-dev</depend>
   <depend>libopencv-dev</depend>
   <depend>sensor_msgs</depend>
@@ -48,17 +49,18 @@ reserved.
   <depend>yaml_cpp_vendor</depend>
   <depend>isaac_ros_visual_mapping</depend>
 
+  <exec_depend>python3-cuda-python-pip-shim</exec_depend>
   <exec_depend>isaac_common_py</exec_depend>
   <exec_depend>isaac_ros_ess</exec_depend>
   <exec_depend>isaac_ros_visual_slam</exec_depend>
   <exec_depend>isaac_ros_visual_global_localization</exec_depend>
   <exec_depend>isaac_ros_foundationstereo_models_install</exec_depend>
+  <exec_depend>isaac_ros_ess_models_install</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
   <test_depend>isaac_ros_r2b_galileo</test_depend>
-  <test_depend>isaac_ros_ess_models_install</test_depend>
   <test_depend>isaac_ros_test_cmake</test_depend>
 
   <export>
