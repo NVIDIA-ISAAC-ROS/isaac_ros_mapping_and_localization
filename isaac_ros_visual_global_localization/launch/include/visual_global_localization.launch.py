@@ -140,7 +140,7 @@ def generate_launch_description() -> lut.LaunchDescription:
     args.add_arg('container_name')
     args.add_arg('vgl_enabled_stereo_cameras')
     args.add_arg('vgl_map_dir')
-    args.add_arg('vgl_config_dir', lu.get_path('isaac_ros_visual_global_localization', 'config'))
+    args.add_arg('vgl_config_dir', lu.get_path('isaac_ros_visual_mapping', 'configs/isaac'))
     args.add_arg('vgl_model_dir', lu.get_path('isaac_ros_visual_mapping', 'models'))
     args.add_arg('vgl_debug_dir', '')
     args.add_arg('vgl_debug_map_raw_dir', '')

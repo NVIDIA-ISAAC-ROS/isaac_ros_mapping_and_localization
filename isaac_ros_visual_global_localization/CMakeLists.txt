@@ -215,9 +215,13 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rviz
+  DESTINATION share/${PROJECT_NAME})
+
 # Embed versioning information into installed files
 ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path isaac_ros_common)
 include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
 generate_version_info(${PROJECT_NAME})
 
-ament_auto_package(INSTALL_TO_SHARE launch config rviz)
+ament_auto_package(INSTALL_TO_SHARE launch)

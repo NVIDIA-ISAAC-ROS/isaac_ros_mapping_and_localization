@@ -33,7 +33,6 @@
 #include "isaac_ros_visual_global_localization/constants.h"
 #include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
 #include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
-#include "protos/common/sensor/camera_sensor.pb.h"
 
 namespace nvidia
 {
@@ -568,7 +567,8 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
 
   protos::common::sensor::CameraSensor sensors;
   sensors.mutable_calibration_parameters()->CopyFrom(params.ToProto());
-  sensors.set_camera_projection_model_type(protos::common::sensor::CameraProjectionModelType::RECTIFIED);
+  // Rectified images are undistorted, so use PINHOLE model
+  sensors.set_camera_projection_model_type(protos::common::sensor::CameraProjectionModelType::PINHOLE);
 
   const auto status = cuvgl_->AddCamera(camera_id, baselink_T_camera, sensors);
   if (!status.ok()) {

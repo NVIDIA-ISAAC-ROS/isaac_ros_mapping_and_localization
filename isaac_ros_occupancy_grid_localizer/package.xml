@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_occupancy_grid_localizer</name>
-  <version>4.0.0</version>
+  <version>4.1.0</version>
   <description>Occupancy Grid Global Localizer.</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -46,6 +46,8 @@
   <build_depend>isaac_ros_common</build_depend>
   <build_depend>gxf_isaac_gems</build_depend>
 
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>gxf_isaac_cuda</exec_depend>
   <exec_depend>gxf_isaac_flatscan_localization</exec_depend>
   <exec_depend>gxf_isaac_localization</exec_depend>

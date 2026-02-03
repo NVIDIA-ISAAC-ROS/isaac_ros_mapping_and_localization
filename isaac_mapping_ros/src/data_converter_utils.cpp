@@ -19,9 +19,13 @@
 #include "isaac_mapping_ros/video_decoder.hpp"
 
 #include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <glog/logging.h>
 #include <omp.h>
+#include <nlohmann/json.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/serialization.hpp>
@@ -31,6 +35,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/point_field.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
@@ -227,14 +232,36 @@ void ReplaceFirst(
 
 std::string TopicNameToCameraName(const std::string & topic_name)
 {
-  std::string camera_name = FileUtils::GetParentDirectory(topic_name);
-  if (!camera_name.empty()) {
-    // remove the first /
-    camera_name.erase(0, 1);
+  // Parse the topic name to extract camera name
+  std::vector<std::string> tokens;
+  std::stringstream ss(topic_name);
+  std::string token;
+
+  while (std::getline(ss, token, '/')) {
+    if (!token.empty()) {
+      tokens.push_back(token);
+    }
   }
 
-  // replace all / to _
-  std::replace(camera_name.begin(), camera_name.end(), '/', '_');
+  std::string camera_name;
+
+  // Handle different topic structures:
+  // 1. /xxxxx/camera_*/image/camera_info or /xxxxx/camera_*/right_image/camera_info
+  // 2. /camera_*/image or /camera_*/camera_info
+  if (tokens.size() >= 4 && tokens[1].find("camera_") == 0)
+  {
+    // New format: /xxxxx/camera_base_front/image/camera_info
+    camera_name = tokens[1];  // e.g., "camera_base_front"
+  } else {
+    // Legacy format: use the old method
+    camera_name = FileUtils::GetParentDirectory(topic_name);
+    if (!camera_name.empty()) {
+      // remove the first /
+      camera_name.erase(0, 1);
+    }
+    // replace all / to _
+    std::replace(camera_name.begin(), camera_name.end(), '/', '_');
+  }
 
   // Uncomment the next line when using old rosbags.
   // ReplaceFirst(camera_name, "back", "rear");
@@ -380,7 +407,7 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
   const sensor_msgs::msg::CameraInfo & camera_info,
   const std::string & sensor_name,
   const nvidia::isaac::common::transform::SE3TransformD & sensor_to_vehicle_transform,
-  bool is_camera_rectified)
+  bool output_image_is_rectified)
 {
   CHECK_EQ(camera_info.k.size(), 9);
   CHECK_EQ(camera_info.r.size(), 9);
@@ -391,9 +418,10 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
   metadata->set_sensor_type(protos::common::sensor::SensorMetaData_SensorType_CAMERA);
   metadata->set_sensor_name(sensor_name);
 
-  // Only apply the rectification matrix rotation to the sensor to vehicle transform
-  // if camera images are raw (not already rectified) and rectification will be performed
-  if (is_camera_rectified) {
+  // Camera driver usually publishes sensor_to_vehicle transform as raw_camera_frame to vehicle frame.
+  // If output_image_is rectified, either by driver, or by our converter, we need to apply the rectification
+  // matrix to change sensor_to_vehicle to rectified_camera_frame to vehicle frame.
+  if (output_image_is_rectified) {
     // apply the rectification matrix rotation part to the sensor to vehicle transform
     // Map raw R (row-major) into an Eigen matrix then invert
     const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> R(&camera_info.r[0]);
@@ -404,6 +432,7 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
         Eigen::Quaterniond(R.inverse()));
       *metadata->mutable_sensor_to_vehicle_transform() =
         (sensor_to_vehicle_transform * rectified_camera_to_raw).ToProto();
+      LOG(INFO) << "Applied rectification matrix to sensor to vehicle transform for camera: " << sensor_name;
     } else {
       LOG(WARNING) <<
         "Rectification matrix is identity or zeros, "
@@ -413,10 +442,10 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
         sensor_to_vehicle_transform.ToProto();
     }
   } else {
-    // Use the original sensor to vehicle transform without rectification adjustments
-    // (images are already rectified)
+    // Use the original sensor to vehicle transform without rectification adjustments if we use raw images
     *metadata->mutable_sensor_to_vehicle_transform() =
       sensor_to_vehicle_transform.ToProto();
+    LOG(INFO) << "Using original sensor to vehicle transform for camera: " << sensor_name;
   }
 
   metadata->set_frequency(30);
@@ -445,12 +474,13 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
   // we don't have rolling_shutter_delay_microseconds settings
 
   // Set camera projection model type based on rectification status
-  if (is_camera_rectified) {
-    camera_sensor.set_camera_projection_model_type(
-      protos::common::sensor::CameraProjectionModelType::RECTIFIED);
-  } else {
+  if (output_image_is_rectified) {
+    // Rectified images are undistorted, so use PINHOLE model
     camera_sensor.set_camera_projection_model_type(
       protos::common::sensor::CameraProjectionModelType::PINHOLE);
+  } else {
+    camera_sensor.set_camera_projection_model_type(
+      protos::common::sensor::CameraProjectionModelType::DISTORTED_PINHOLE);
   }
 
   return camera_sensor;
@@ -469,8 +499,8 @@ std::map<std::string, std::string> data_converter_utils::GetTopicNameToMessageTy
   return topic_name_to_message_type;
 }
 
-bool data_converter_utils::AddStaticTransformToBuffer(
-  const std::string & sensor_data_bag, tf2_ros::Buffer & tf_buffer)
+bool data_converter_utils::AddTfTransformsToBuffer(
+  const std::string & sensor_data_bag, tf2_ros::Buffer & tf_buffer, bool use_tf_topic)
 {
   try {
     // Set up the bag reader
@@ -483,7 +513,10 @@ bool data_converter_utils::AddStaticTransformToBuffer(
     // Read messages from the bag
     while (reader.has_next()) {
       auto bag_message = reader.read_next();
-      if (bag_message->topic_name == "/tf_static") {
+      bool is_tf_static = (bag_message->topic_name == "/tf_static");
+      bool is_tf = (bag_message->topic_name == "/tf");
+
+      if (is_tf_static || (is_tf && use_tf_topic)) {
         tf2_msgs::msg::TFMessage::SharedPtr tf_msg =
           std::make_shared<tf2_msgs::msg::TFMessage>();
         // Deserialize the message
@@ -491,14 +524,14 @@ bool data_converter_utils::AddStaticTransformToBuffer(
         serialization.deserialize_message(&serialized_msg, tf_msg.get());
         // Add each transform to the buffer
         for (const auto & transform : tf_msg->transforms) {
-          tf_buffer.setTransform(transform, "default_authority", true);
+          tf_buffer.setTransform(transform, "default_authority", is_tf_static);
         }
       }
     }
 
     return true;
   } catch (const std::exception & e) {
-    LOG(ERROR) << "Failed to read tf static transform due to: " << e.what();
+    LOG(ERROR) << "Failed to read tf transforms due to: " << e.what();
     return false;
   }
 }
@@ -579,11 +612,23 @@ bool data_converter_utils::GetFrameSyncAndPoseMap(
     return false;
   }
 
+  // If synced_timestamps_nanoseconds is empty, skip synced_sample_id population but still populate poses
   if (synced_timestamps_nanoseconds.empty()) {
-    LOG(ERROR) << "Got empty synced_timestamps_nanoseconds";
-    return false;
+    LOG(INFO) <<
+      "Empty synced_timestamps_nanoseconds - skipping synced_sample_id population, only populating poses";
+    // Only populate poses, no synced_sample_id
+    if (!pose_interpolator.timestamps().empty()) {
+      for (size_t i = 0; i < all_timestamps_nanoseconds.size(); ++i) {
+        auto pose = pose_interpolator.GetInterpolatedPose(all_timestamps_nanoseconds[i] / 1000);
+        if (pose) {
+          sample_id_to_pose[i] = pose.value();
+        }
+      }
+    }
+    return true;
   }
 
+  // Original synchronized frame processing logic
   if (!pose_interpolator.timestamps().empty()) {
     if (pose_interpolator.timestamps().front() > all_timestamps_nanoseconds.back() / 1000) {
       LOG(ERROR) << "Front pose timestamp " << pose_interpolator.timestamps().front() <<
@@ -732,12 +777,13 @@ data_converter_utils::ExtractCameraMetadata(
     metadata.set_camera_topic_name(config.image_topic);
     metadata.set_message_type(topic_name_to_message_type.at(config.image_topic));
     metadata.set_paired_camera_name(config.paired_camera_name);
-    metadata.set_is_depth_image(config.is_depth_image);
     metadata.set_is_camera_rectified(config.is_camera_rectified);
     metadata.set_swap_rb_channels(config.swap_rb_channels);
-    camera_name_to_metadata[camera_name].set_camera_params(
-      camera_name_to_camera_params.at(
-        camera_name));
+    auto camera_params = camera_name_to_camera_params.at(camera_name);
+    if (config.is_depth_image) {
+      camera_params.set_chroma(protos::common::sensor::CameraSensor::DEPTH);
+    }
+    metadata.set_camera_params(camera_params);
     image_topic_to_camera_name[config.image_topic] = camera_name;
   }
 
@@ -830,10 +876,10 @@ data_converter_utils::ExtractCameraSensors(
   auto clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
   tf2_ros::Buffer tf_buffer(clock);
 
-  if (!AddStaticTransformToBuffer(
-      sensor_data_bag, tf_buffer))
+  if (!AddTfTransformsToBuffer(
+      sensor_data_bag, tf_buffer, true))
   {
-    LOG(ERROR) << "Failed to read tf static transform";
+    LOG(ERROR) << "Failed to read tf transforms";
     return {};
   }
 
@@ -1117,6 +1163,52 @@ bool data_converter_utils::ReadCameraTopicConfig(
       }
     }
 
+    if (config["rgb_cameras"]) {
+      for (const auto & camera : config["rgb_cameras"]) {
+        if (!camera["name"]) {
+          LOG(ERROR) << "No camera name for RGB camera: " << camera.as<std::string>();
+          continue;
+        }
+
+        if (!camera["image_topic"]) {
+          LOG(ERROR) << "No image topic for RGB camera: " <<
+            camera["name"].as<std::string>();
+          continue;
+        }
+
+        if (!camera["camera_info_topic"]) {
+          LOG(ERROR) << "No camera info topic for RGB camera: " <<
+            camera["name"].as<std::string>();
+          continue;
+        }
+
+        CameraTopicConfig rgb_camera;
+        rgb_camera.name = camera["name"].as<std::string>();
+        rgb_camera.camera_info_topic = camera["camera_info_topic"].as<std::string>();
+        rgb_camera.image_topic = camera["image_topic"].as<std::string>();
+        rgb_camera.is_depth_image = false;
+
+        if (camera["frame_id"]) {
+          rgb_camera.frame_id_name = camera["frame_id"].as<std::string>();
+        }
+        if (camera["is_camera_rectified"]) {
+          rgb_camera.is_camera_rectified = camera["is_camera_rectified"].as<bool>();
+        }
+        if (camera["swap_rb_channels"]) {
+          rgb_camera.swap_rb_channels = camera["swap_rb_channels"].as<bool>();
+        }
+
+        // RGB cameras don't have paired cameras by default
+        rgb_camera.paired_camera_name = "";
+
+        camera_info_topic_to_config[rgb_camera.camera_info_topic] = rgb_camera;
+
+        LOG(INFO) << "Added RGB camera: " << rgb_camera.name
+                  << " with image topic: " << rgb_camera.image_topic
+                  << " and camera info topic: " << rgb_camera.camera_info_topic;
+      }
+    }
+
     if (camera_info_topic_to_config.empty()) {
       LOG(ERROR) << "No valid camera specified in file: " << topic_config_file;
       return false;
@@ -1278,6 +1370,8 @@ struct CameraProcessingData
 
   const size_t max_queue_size = 10;
   std::condition_variable queue_not_full_cv;
+  // Per-camera last timestamp for checking frame timestamp differences
+  uint64_t last_image_timestamp_ns{0};
 };
 
 void DecodingThread(
@@ -1411,6 +1505,31 @@ void DecodingThread(
       continue;
     }
 
+    // Check if current frame timestamp differs too much from previous frame (>10s)
+    if (processing_data.last_image_timestamp_ns != 0) {
+      uint64_t timestamp_diff = 0;
+      if (image_frame.timestamp_nanoseconds > processing_data.last_image_timestamp_ns) {
+        timestamp_diff = image_frame.timestamp_nanoseconds -
+          processing_data.last_image_timestamp_ns;
+      } else {
+        timestamp_diff = processing_data.last_image_timestamp_ns -
+          image_frame.timestamp_nanoseconds;
+      }
+
+      // Skip frame if timestamp difference is greater than 10 seconds (10 * 1e9 nanoseconds)
+      const uint64_t max_timestamp_diff_nanoseconds = 10ULL * 1000000000ULL;
+      if (timestamp_diff > max_timestamp_diff_nanoseconds) {
+        LOG(WARNING) << "Skipping camera frame for " << camera_name
+                     << " due to large timestamp difference: "
+                     << (timestamp_diff / 1000000000.0) << " seconds"
+                     << " (current: " << image_frame.timestamp_nanoseconds
+                     << ", previous: " << processing_data.last_image_timestamp_ns << ")";
+        continue;
+      }
+    }
+
+    // Update last timestamp for this camera
+    processing_data.last_image_timestamp_ns = image_frame.timestamp_nanoseconds;
 
     // Check if timestamp is the same as the one in metadata
     uint64_t metadata_timestamp = metadata.timestamp_nanoseconds()[sample_id];
@@ -1701,6 +1820,114 @@ data_converter_utils::ExtractPosesFromBag(
   return pose_interpolator;
 }
 
+nvidia::isaac::common::transform::SE3PoseLinearInterpolator
+data_converter_utils::ExtractPoseInterpolatorFromTF(
+  const std::string & bag_file,
+  const std::string & parent_frame,
+  const std::string & child_frame)
+{
+  nvidia::isaac::common::transform::SE3PoseLinearInterpolator pose_interpolator;
+
+  LOG(INFO) << "Extracting pose interpolator from TF: " << parent_frame
+            << " to " << child_frame;
+
+  try {
+    // Set up TF buffer
+    auto clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+    tf2_ros::Buffer tf_buffer(clock);
+
+    // Add both /tf and /tf_static transforms to the buffer
+    if (!AddTfTransformsToBuffer(bag_file, tf_buffer, true)) {
+      LOG(ERROR) << "Failed to read tf transforms from bag";
+      return pose_interpolator;
+    }
+
+    // Read all /tf and /tf_static messages and collect timestamps
+    rosbag2_cpp::Reader tf_reader;
+    tf_reader.open(bag_file);
+
+    rclcpp::Serialization<tf2_msgs::msg::TFMessage> tf_serialization;
+    std::set<uint64_t> unique_timestamps;
+    size_t tf_message_count = 0;
+    size_t tf_static_message_count = 0;
+
+    // Collect timestamps from all /tf and /tf_static messages
+    while (tf_reader.has_next()) {
+      rosbag2_storage::SerializedBagMessageSharedPtr msg = tf_reader.read_next();
+
+      if (msg->topic_name != "/tf" && msg->topic_name != "/tf_static") {
+        continue;
+      }
+
+      tf2_msgs::msg::TFMessage::SharedPtr tf_msg =
+        std::make_shared<tf2_msgs::msg::TFMessage>();
+      rclcpp::SerializedMessage serialized_msg(*msg->serialized_data);
+      tf_serialization.deserialize_message(&serialized_msg, tf_msg.get());
+
+      // Collect timestamps
+      for (const auto & transform : tf_msg->transforms) {
+        uint64_t timestamp_microseconds = ROSTimestampToMicroseconds(transform.header.stamp);
+        unique_timestamps.insert(timestamp_microseconds);
+      }
+
+      if (msg->topic_name == "/tf_static") {
+        tf_static_message_count++;
+      } else {
+        tf_message_count++;
+      }
+    }
+    tf_reader.close();
+
+    LOG(INFO) << "Processed " << tf_message_count << " /tf messages and "
+              << tf_static_message_count << " /tf_static messages with "
+              << unique_timestamps.size() << " unique timestamps";
+
+    // Second pass: query the desired transform at each timestamp
+    size_t successful_queries = 0;
+    size_t failed_queries = 0;
+
+    for (uint64_t timestamp_microseconds : unique_timestamps) {
+      try {
+        // Convert timestamp to ROS time
+        rclcpp::Time ros_time(timestamp_microseconds * 1000);  // microseconds to nanoseconds
+
+        // Query the transform at this specific time
+        geometry_msgs::msg::TransformStamped transform_stamped =
+          tf_buffer.lookupTransform(
+          parent_frame, child_frame, tf2::TimePoint(
+            std::chrono::nanoseconds(ros_time.nanoseconds())));
+
+        // Convert to SE3Transform and add to interpolator
+        nvidia::isaac::common::transform::SE3TransformD se3_transform =
+          ROSTransformToSE3Transform(transform_stamped.transform);
+
+        pose_interpolator.AddNextPose(timestamp_microseconds, se3_transform);
+        successful_queries++;
+
+      } catch (const tf2::TransformException & ex) {
+        failed_queries++;
+        // Only log first few failures to avoid spam
+        if (failed_queries <= 3) {
+          LOG(WARNING) << "Transform lookup failed at timestamp " << timestamp_microseconds
+                       << ": " << ex.what();
+        }
+      }
+    }
+
+    LOG(INFO) << "Successfully extracted " << successful_queries << " poses for "
+              << parent_frame << " to " << child_frame;
+    if (failed_queries > 0) {
+      LOG(WARNING) << "Failed to extract " << failed_queries <<
+        " poses due to transform lookup failures";
+    }
+
+  } catch (const std::exception & e) {
+    LOG(ERROR) << "Failed to extract pose interpolator from TF: " << e.what();
+  }
+
+  return pose_interpolator;
+}
+
 bool data_converter_utils::ExtractOdometryMsgFromPoseBag(
   const std::string & pose_bag_file, const std::string & pose_topic_name,
   std::vector<nav_msgs::msg::Odometry> & odometry_msgs,
@@ -1905,6 +2132,370 @@ bool data_converter_utils::ExtractImagesFromExtractedDir(
       }
     }   // for each timestamp
   } // for each camera name
+
+  return true;
+}
+
+bool data_converter_utils::WritePointCloudToPLY(
+  const std::string & ply_file_path,
+  const std::vector<PointCloudPoint> & points,
+  bool include_timestamp)
+{
+  std::ofstream ply_file(ply_file_path, std::ios::binary);
+  if (!ply_file.is_open()) {
+    LOG(ERROR) << "Failed to open PLY file for writing: " << ply_file_path;
+    return false;
+  }
+
+  // Write PLY header
+  ply_file << "ply\n";
+  ply_file << "format binary_little_endian 1.0\n";
+  ply_file << "element vertex " << points.size() << "\n";
+  ply_file << "property float x\n";
+  ply_file << "property float y\n";
+  ply_file << "property float z\n";
+  if (include_timestamp) {
+    ply_file << "property uint t\n";
+  }
+  ply_file << "end_header\n";
+
+  // Write binary data
+  for (const auto & point : points) {
+    ply_file.write(reinterpret_cast<const char *>(&point.x), sizeof(float));
+    ply_file.write(reinterpret_cast<const char *>(&point.y), sizeof(float));
+    ply_file.write(reinterpret_cast<const char *>(&point.z), sizeof(float));
+    if (include_timestamp) {
+      ply_file.write(reinterpret_cast<const char *>(&point.t_offset_nanoseconds), sizeof(uint32_t));
+    }
+  }
+
+  ply_file.close();
+  return true;
+}
+
+bool data_converter_utils::ExtractPointCloudsFromRosbag(
+  const std::string & sensor_data_bag,
+  const std::string & point_cloud_topic,
+  const std::string & output_folder,
+  const std::string & base_link_name,
+  const std::string & reference_pose_frame,
+  bool do_motion_compensate,
+  LidarMetadata & lidar_metadata)
+{
+
+  nvidia::isaac::common::datetime::ScopedTimer timer("ExtractPointCloudsFromRosbag");
+
+  // Create output folder if it doesn't exist
+  if (!FileUtils::EnsureDirectoryExists(output_folder)) {
+    LOG(ERROR) << "Failed to create output folder: " << output_folder;
+    return false;
+  }
+
+  rosbag2_cpp::Reader reader;
+  reader.open(sensor_data_bag);
+
+  CHECK(reader.has_next()) << "Sensor data bag file: " << sensor_data_bag <<
+    " does not have any message";
+
+  if (VLOG_IS_ON(1)) {
+    PrintBagMetadata(reader.get_metadata());
+  }
+
+  const std::map<std::string, std::string> topic_name_to_message_type =
+    GetTopicNameToMessageTypeMap(reader.get_metadata());
+
+  // Check if the point cloud topic exists
+  if (topic_name_to_message_type.find(point_cloud_topic) == topic_name_to_message_type.end()) {
+    LOG(ERROR) << "Point cloud topic not found in bag: " << point_cloud_topic;
+    return false;
+  }
+
+  const std::string message_type = topic_name_to_message_type.at(point_cloud_topic);
+  if (message_type != "sensor_msgs/msg/PointCloud2") {
+    LOG(ERROR) << "Expected sensor_msgs/msg/PointCloud2 but got: " << message_type;
+    return false;
+  }
+
+  // Set up TF buffer for transform lookup
+  auto clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+  tf2_ros::Buffer tf_buffer(clock);
+  if (!AddTfTransformsToBuffer(sensor_data_bag, tf_buffer, true)) {
+    LOG(WARNING) << "Failed to read tf transforms, will use identity transform";
+  }
+
+  // Set up motion compensation if requested and reference_pose_frame is provided
+  bool do_motion_compensation = do_motion_compensate && !reference_pose_frame.empty() &&
+    !base_link_name.empty();
+  nvidia::isaac::common::transform::SE3PoseLinearInterpolator pose_interpolator;
+
+  if (do_motion_compensation) {
+    LOG(INFO) <<
+      "Motion compensation enabled, will extract lidar frame to reference pose frame poses after determining lidar frame";
+    // Note: pose_interpolator will be populated after we determine the lidar frame from first message
+  }
+
+  // Initialize lidar metadata
+  lidar_metadata.sensor_name = "";  // Will be set from frame_id
+  lidar_metadata.average_num_points_per_frame = 0.0;
+  lidar_metadata.timestamps_nanoseconds.clear();
+  lidar_metadata.motion_compensated = do_motion_compensation;
+
+  rclcpp::Serialization<sensor_msgs::msg::PointCloud2> serialization;
+  size_t cloud_count = 0;
+  uint64_t total_points = 0;
+  std::string lidar_folder_path = "";
+
+  while (reader.has_next()) {
+    rosbag2_storage::SerializedBagMessageSharedPtr msg = reader.read_next();
+
+    if (msg->topic_name != point_cloud_topic) {
+      continue;
+    }
+
+    // Deserialize the PointCloud2 message
+    sensor_msgs::msg::PointCloud2::SharedPtr cloud_msg =
+      std::make_shared<sensor_msgs::msg::PointCloud2>();
+    rclcpp::SerializedMessage serialized_msg(*msg->serialized_data);
+    serialization.deserialize_message(&serialized_msg, cloud_msg.get());
+
+    // Extract timestamp
+    uint64_t timestamp_nanoseconds = ROSTimestampToNanoseconds(cloud_msg->header.stamp);
+    lidar_metadata.timestamps_nanoseconds.push_back(timestamp_nanoseconds);
+
+    // Set frame_id and create lidar folder if not already set
+    if (lidar_metadata.frame_id.empty()) {
+      lidar_metadata.frame_id = cloud_msg->header.frame_id;
+      lidar_metadata.sensor_name = cloud_msg->header.frame_id;
+
+      // Now that we know the lidar frame, extract pose interpolator for motion compensation
+      if (do_motion_compensation) {
+        LOG(INFO) << "Extracting lidar frame to reference pose frame poses: " <<
+          lidar_metadata.frame_id
+                  << " to " << reference_pose_frame;
+
+        // Extract lidar frame to reference pose frame poses from TF messages in the bag
+        pose_interpolator = ExtractPoseInterpolatorFromTF(
+          sensor_data_bag, reference_pose_frame,
+          lidar_metadata.frame_id);
+
+        if (pose_interpolator.timestamps().empty()) {
+          LOG(WARNING) << "No " << lidar_metadata.frame_id << " to " << reference_pose_frame
+                       << " transforms found, disabling motion compensation";
+          do_motion_compensation = false;
+        } else {
+          LOG(INFO) << "Motion compensation ready with " << pose_interpolator.timestamps().size()
+                    << " poses for lidar frame " << lidar_metadata.frame_id;
+        }
+      }
+
+      // Create lidar-specific folder
+      lidar_folder_path = FileUtils::JoinPath(output_folder, lidar_metadata.sensor_name);
+      if (!FileUtils::EnsureDirectoryExists(lidar_folder_path)) {
+        LOG(ERROR) << "Failed to create lidar folder: " << lidar_folder_path;
+        return false;
+      }
+
+      // Get lidar to vehicle transform
+      if (!base_link_name.empty()) {
+        auto transform_opt = GetRelativeTransformFromTFBuffer(
+          tf_buffer, cloud_msg->header.frame_id, base_link_name);
+        if (transform_opt) {
+          lidar_metadata.lidar_to_vehicle_transform = *transform_opt;
+          LOG(INFO) << "Found lidar to vehicle transform for frame: " << cloud_msg->header.frame_id;
+        } else {
+          LOG(WARNING) << "Could not find transform from " << cloud_msg->header.frame_id
+                       << " to " << base_link_name << ", using identity";
+          lidar_metadata.lidar_to_vehicle_transform =
+            nvidia::isaac::common::transform::SE3TransformD();
+        }
+      } else {
+        LOG(WARNING) << "No base_link_name provided, using identity transform";
+        lidar_metadata.lidar_to_vehicle_transform =
+          nvidia::isaac::common::transform::SE3TransformD();
+      }
+    }
+
+    // Parse point cloud fields to find field offsets
+    std::map<std::string, sensor_msgs::msg::PointField> field_map;
+    for (const auto & field : cloud_msg->fields) {
+      field_map[field.name] = field;
+    }
+
+    // Check required fields exist
+    std::vector<std::string> required_fields = {"x", "y", "z", "t"};
+    for (const auto & field_name : required_fields) {
+      if (field_map.find(field_name) == field_map.end()) {
+        LOG(ERROR) << "Required field '" << field_name << "' not found in point cloud";
+        return false;
+      }
+    }
+
+    // Extract points
+    std::vector<PointCloudPoint> points;
+    points.reserve(cloud_msg->width * cloud_msg->height);
+
+    const uint8_t * data_ptr = cloud_msg->data.data();
+    const size_t point_step = cloud_msg->point_step;
+
+    // Get the reference pose at the point cloud timestamp for motion compensation
+    nvidia::isaac::common::transform::SE3TransformD reference_pose;
+    nvidia::isaac::common::transform::SE3TransformD reference_pose_inverse;
+    bool has_reference_pose = false;
+
+    if (do_motion_compensation) {
+      uint64_t cloud_timestamp_microseconds = timestamp_nanoseconds / 1000;
+      auto reference_pose_opt = pose_interpolator.GetInterpolatedPose(cloud_timestamp_microseconds);
+      if (reference_pose_opt) {
+        reference_pose = reference_pose_opt.value();
+        reference_pose_inverse = reference_pose.Inverse();
+        has_reference_pose = true;
+      } else {
+        LOG(WARNING) << "Could not get reference pose for cloud at timestamp: "
+                     << cloud_timestamp_microseconds <<
+          ", skipping motion compensation for this cloud";
+      }
+    }
+
+    for (size_t i = 0; i < cloud_msg->width * cloud_msg->height; ++i) {
+      const uint8_t * point_ptr = data_ptr + i * point_step;
+
+      PointCloudPoint point;
+
+      // Extract x, y, z (float32)
+      std::memcpy(&point.x, point_ptr + field_map["x"].offset, sizeof(float));
+      std::memcpy(&point.y, point_ptr + field_map["y"].offset, sizeof(float));
+      std::memcpy(&point.z, point_ptr + field_map["z"].offset, sizeof(float));
+
+      // Extract timestamp offset (uint32)
+      std::memcpy(&point.t_offset_nanoseconds, point_ptr + field_map["t"].offset, sizeof(uint32_t));
+
+      // skip empty point
+      if (point.t_offset_nanoseconds == 0) {
+        continue;
+      }
+
+      // Apply motion compensation if enabled
+      if (do_motion_compensation && has_reference_pose) {
+        // Calculate the absolute timestamp for this point (cloud timestamp + point offset)
+        uint64_t point_timestamp_nanoseconds = timestamp_nanoseconds + point.t_offset_nanoseconds;
+        uint64_t point_timestamp_microseconds = point_timestamp_nanoseconds / 1000;
+
+        // Get the pose at the point's timestamp
+        auto point_pose_opt = pose_interpolator.GetInterpolatedPose(point_timestamp_microseconds);
+        if (point_pose_opt) {
+          // Calculate relative transform from reference pose to point pose
+          nvidia::isaac::common::transform::SE3TransformD point_pose = point_pose_opt.value();
+          nvidia::isaac::common::transform::SE3TransformD relative_transform =
+            reference_pose_inverse * point_pose;
+
+          // Apply the relative transform to the point
+          Eigen::Vector3d point_vector(point.x, point.y, point.z);
+          Eigen::Vector3d transformed_point = relative_transform * point_vector;
+
+          point.x = static_cast<float>(transformed_point.x());
+          point.y = static_cast<float>(transformed_point.y());
+          point.z = static_cast<float>(transformed_point.z());
+        }
+      }
+
+      points.push_back(point);
+    }
+
+    total_points += points.size();
+
+    // Generate output filename using timestamp in nanoseconds
+    std::string ply_filename = std::to_string(timestamp_nanoseconds) + ".ply";
+    std::string ply_filepath = FileUtils::JoinPath(lidar_folder_path, ply_filename);
+
+    // Write PLY file (skip timestamp field if motion compensated)
+    if (!WritePointCloudToPLY(ply_filepath, points, !do_motion_compensation)) {
+      LOG(ERROR) << "Failed to write PLY file: " << ply_filepath;
+      return false;
+    }
+
+    cloud_count++;
+    if (cloud_count % 10 == 0) {
+      LOG(INFO) << "Processed " << cloud_count << " point clouds, latest: " << ply_filename
+                << " with " << points.size() << " points";
+    }
+  }
+
+  reader.close();
+
+  // Calculate average points per frame and frequency
+  if (cloud_count > 0) {
+    lidar_metadata.average_num_points_per_frame = static_cast<double>(total_points) / cloud_count;
+
+    // Calculate frequency from timestamps
+    if (lidar_metadata.timestamps_nanoseconds.size() > 1) {
+      uint64_t first_timestamp = lidar_metadata.timestamps_nanoseconds.front();
+      uint64_t last_timestamp = lidar_metadata.timestamps_nanoseconds.back();
+      double duration_seconds = static_cast<double>(last_timestamp - first_timestamp) / 1e9;
+      lidar_metadata.frequency = static_cast<double>(cloud_count - 1) / duration_seconds;
+    }
+  }
+
+  // Assign sensor_id (for now, use a fixed ID - this could be made configurable)
+  lidar_metadata.sensor_id = 4;  // Using 4 as example, similar to camera example
+
+  // Write lidar metadata to JSON file
+  nlohmann::json lidar_json;
+  lidar_json["sensor_name"] = lidar_metadata.sensor_name;
+  lidar_json["frame_id"] = lidar_metadata.frame_id;
+  lidar_json["average_num_points_per_frame"] = lidar_metadata.average_num_points_per_frame;
+  lidar_json["total_frames"] = cloud_count;
+  lidar_json["motion_compensated"] = lidar_metadata.motion_compensated;
+  lidar_json["timestamps_nanoseconds"] = lidar_metadata.timestamps_nanoseconds;
+
+  // Add sensor_meta_data structure
+  nlohmann::json sensor_meta_data;
+  sensor_meta_data["sensor_id"] = lidar_metadata.sensor_id;
+  sensor_meta_data["sensor_type"] = lidar_metadata.sensor_type;
+  sensor_meta_data["sensor_name"] = lidar_metadata.sensor_name;
+  sensor_meta_data["frequency"] = lidar_metadata.frequency;
+
+  // Convert SE3Transform to axis_angle and translation format like camera
+  const auto & transform = lidar_metadata.lidar_to_vehicle_transform;
+  const auto & translation = transform.translation();
+  const auto & rotation = transform.rotation();
+
+  // Convert quaternion to axis-angle representation
+  Eigen::AngleAxisd axis_angle(rotation);
+  double angle_degrees = axis_angle.angle() * 180.0 / M_PI;
+  Eigen::Vector3d axis = axis_angle.axis();
+
+  sensor_meta_data["sensor_to_vehicle_transform"] = {
+    {"axis_angle", {
+        {"x", axis.x()},
+        {"y", axis.y()},
+        {"z", axis.z()},
+        {"angle_degrees", angle_degrees}
+      }},
+    {"translation", {
+        {"x", translation.x()},
+        {"y", translation.y()},
+        {"z", translation.z()}
+      }}
+  };
+
+  lidar_json["sensor_meta_data"] = sensor_meta_data;
+
+  // Write JSON file
+  std::string json_filepath = FileUtils::JoinPath(output_folder, "lidar_frames.json");
+  std::ofstream json_file(json_filepath);
+  if (json_file.is_open()) {
+    json_file << lidar_json.dump(4);  // Pretty print with 4 spaces
+    json_file.close();
+    LOG(INFO) << "Lidar metadata written to: " << json_filepath;
+  } else {
+    LOG(ERROR) << "Failed to write lidar metadata JSON file: " << json_filepath;
+    return false;
+  }
+
+  LOG(INFO) << "Successfully extracted " << cloud_count << " point clouds to " << lidar_folder_path;
+  LOG(INFO) << "Average points per frame: " << std::fixed << std::setprecision(1)
+            << lidar_metadata.average_num_points_per_frame;
+  LOG(INFO) << "Lidar frame: " << lidar_metadata.frame_id;
 
   return true;
 }

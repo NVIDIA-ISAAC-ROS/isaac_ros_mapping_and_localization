@@ -31,7 +31,7 @@
 #include "common/datetime/scoped_timer.h"
 #include "common/file_utils/file_utils.h"
 #include "protos/visual/general/keyframe_metadata.pb.h"
-#include "visual/cusfm/data_selector.h"
+#include "visual/general/data_selector.h"
 #include "visual/general/keyframe_metadata.h"
 #include "visual/utils/keyframe_edex_utils.h"
 #include "common/transform/pose_serializer.h"
@@ -56,10 +56,10 @@ DEFINE_string(
   pose_topic_name, "/visual_slam/vis/slam_odometry",
   "[OPTIONAL] The topic name of the pose to use");
 DEFINE_double(
-  min_inter_frame_distance, 0.05,
+  min_inter_frame_distance, 0.0,
   "[OPTIONAL] The minimal inter-frame distance between two key frames");
 DEFINE_double(
-  min_inter_frame_rotation_degrees, 1,
+  min_inter_frame_rotation_degrees, 0.0,
   "[OPTIONAL] The minimal inter-frame rotation between two key frames");
 DEFINE_int64(
   sample_sync_threshold_microseconds, 50,
@@ -77,6 +77,18 @@ DEFINE_string(camera_topic_config, "", "[OPTIONAL] The camera topic config file"
 DEFINE_bool(
   dry_run, false,
   "In dry run mode it will only generate metadata instead of the real camera images");
+DEFINE_bool(
+  convert_lidar, false,
+  "[OPTIONAL] If true, will extract point cloud data to PLY files");
+DEFINE_string(
+  point_cloud_topic, "/velodyne_lidar/Lidar/velarray_pcl",
+  "[OPTIONAL] The topic name of the point cloud to extract");
+DEFINE_string(
+  reference_pose_frame, "",
+  "[OPTIONAL] The reference pose frame name for pose interpolation and motion compensation");
+DEFINE_bool(
+  do_motion_compensate, false,
+  "[OPTIONAL] If true, apply motion compensation to lidar points using reference_pose_frame");
 
 const char kEdexFrameMetaFileName[] = "frame_metadata.jsonl";
 const char kEdexStereoFileName[] = "stereo.edex";
@@ -144,7 +156,15 @@ bool WriteImage(
         }
       } else {
         // For color images, use the original approach
-        if (!cv::imwrite(image_full_path, image_frame.image)) {
+        cv::Mat image_to_save;
+        if (image_frame.image.channels() == 1) {
+          // Convert single-channel (grayscale) image to BGR with 3 channels
+          cv::cvtColor(image_frame.image, image_to_save, cv::COLOR_GRAY2BGR);
+        } else {
+          image_to_save = image_frame.image;
+        }
+
+        if (!cv::imwrite(image_full_path, image_to_save)) {
           LOG(ERROR) << "Failed to write image to file:" << image_full_path;
           return false;
         }
@@ -211,14 +231,16 @@ void AddStereoPair(
     SE3TransformD relative_pose =
       left_transform.Inverse() * right_transform;
 
-    if (std::fabs(relative_pose.translation().y()) > kNonBaselineEps ||
-      std::fabs(relative_pose.translation().z()) > kNonBaselineEps ||
-      std::fabs(relative_pose.translation().x()) < kMinBaselineThreshold)
-    {
+    if (!paired_camera_metadata.is_depth_image() && !camera_metadata.is_depth_image()) {
+      if (std::fabs(relative_pose.translation().y()) > kNonBaselineEps ||
+        std::fabs(relative_pose.translation().z()) > kNonBaselineEps ||
+        std::fabs(relative_pose.translation().x()) < kMinBaselineThreshold)
+      {
 
-      LOG(WARNING) << "Input stereo pair: [" << camera_name << "," <<
-        camera_metadata.get_paired_camera_name() << ": has invalid transform:" <<
-        relative_pose.ToString();
+        LOG(WARNING) << "Input stereo pair: [" << camera_name << "," <<
+          camera_metadata.get_paired_camera_name() << ": has invalid transform:" <<
+          relative_pose.ToString();
+      }
     }
 
     auto stereo_pair = metadata_collection.add_stereo_pair();
@@ -247,17 +269,21 @@ void ExtractFromRosBag()
     LOG(INFO) << "rectify_images=false: configuring cameras for raw image processing with distortion preservation";
     for (auto & [camera_name, camera_metadata] : camera_name_to_camera_metadata) {
       if (camera_metadata.get_is_camera_rectified()){
-        LOG(FATAL) << "Camera " << camera_name << " is already rectified, can't set --rectify_images=False";
-        return;
+        LOG(WARNING) << "User selected to skip rectification, but camera " << camera_name << " is already rectified";
       }
     }
   }
 
   // Get synced timestamps vector per video
   std::vector<std::vector<uint64_t>> synced_timestamps;
-  ConverterUtil::FindSyncedTimestamps(
-    camera_name_to_camera_metadata, synced_timestamps,
-    FLAGS_sample_sync_threshold_microseconds * 1000);
+  if (FLAGS_sample_sync_threshold_microseconds == 0) {
+    LOG(INFO) << "sample_sync_threshold_microseconds is 0, skipping frame synchronization";
+    synced_timestamps.resize(camera_name_to_camera_metadata.size());
+  } else {
+    ConverterUtil::FindSyncedTimestamps(
+      camera_name_to_camera_metadata, synced_timestamps,
+      FLAGS_sample_sync_threshold_microseconds * 1000);
+  }
 
   // Selected by pose
   common::transform::SE3PoseLinearInterpolator pose_interpolator;
@@ -275,6 +301,23 @@ void ExtractFromRosBag()
       nvidia::isaac::common::transform::PoseSerializer::GetPoseInterpolatorFromTumFile(
         FLAGS_tum_pose_file,
         pose_interpolator)) << "Failed to read pose from file: " << FLAGS_tum_pose_file;
+  } else if (!FLAGS_reference_pose_frame.empty() && !FLAGS_base_link_name.empty()) {
+    // Use reference_pose_frame to base_link transforms from TF messages in the sensor bag
+    LOG(INFO) << "Using reference pose frame to base_link transforms from TF for pose interpolation";
+    pose_interpolator = ConverterUtil::ExtractPoseInterpolatorFromTF(
+      FLAGS_sensor_data_bag_file,
+      FLAGS_reference_pose_frame,
+      FLAGS_base_link_name);
+
+    if (!pose_interpolator.timestamps().empty()) {
+      LOG(INFO) << "TF Pose Timestamps: " << pose_interpolator.timestamps().front() <<
+        ", " << pose_interpolator.timestamps().back();
+      LOG(INFO) << "Found " << pose_interpolator.timestamps().size() <<
+        " TF poses for camera frame selection";
+    } else {
+      LOG(WARNING) << "No reference pose frame to base_link transforms found in TF data, "
+                   << "fallback to use all frames";
+    }
   } else {
     LOG(INFO) << "Not using any pose to select frames";
   }
@@ -313,7 +356,7 @@ void ExtractFromRosBag()
         sample_id_to_poses)) << "Failed to get frame id and sync info for: " <<
       camera_name_metadata_pair.first;
 
-    std::vector<uint64_t> selected_frames = visual::cusfm::DataSelector::SelectKeyFramesByPose(
+    std::vector<uint64_t> selected_frames = visual::general::DataSelector::SelectKeyFramesByPose(
       sample_id_to_poses, FLAGS_min_inter_frame_distance, FLAGS_min_inter_frame_rotation_degrees);
 
     camera_metadata.set_selected_frames(
@@ -372,7 +415,7 @@ void ExtractFromRosBag()
       kEdexFrameMetaFileName);
     auto status = FileUtils::WriteTextFile(frame_meta_file, frames_meta_str);
     CHECK(status.ok()) << status.message();
-    LOG(INFO) << "frame_meta jsonl  saved: " << frame_meta_file;
+    LOG(INFO) << "frame_meta jsonl saved: " << frame_meta_file;
 
     std::string stereo_edex_file = FileUtils::JoinPath(
       FLAGS_output_folder_path,
@@ -418,6 +461,21 @@ int main(int argc, char ** argv)
   if (!FLAGS_tum_pose_file.empty()) {
     if (!FileUtils::FileExists(FLAGS_tum_pose_file)) {
       LOG(FATAL) << "TUM pose file does not exist: " << FLAGS_tum_pose_file;
+    }
+  }
+
+  // Validate lidar parameters
+  if (FLAGS_convert_lidar) {
+    CHECK(!FLAGS_point_cloud_topic.empty()) <<
+      "Please provide --point_cloud_topic when --convert_lidar=true";
+    LOG(INFO) << "Lidar conversion enabled for topic: " << FLAGS_point_cloud_topic;
+
+    if (FLAGS_do_motion_compensate) {
+      CHECK(!FLAGS_reference_pose_frame.empty()) <<
+        "Please provide --reference_pose_frame when --do_motion_compensate is true";
+      CHECK(!FLAGS_base_link_name.empty()) <<
+        "Please provide --base_link_name when --do_motion_compensate is true";
+      LOG(INFO) << "Motion compensation will be applied using reference pose frame: " << FLAGS_reference_pose_frame;
     }
   }
 

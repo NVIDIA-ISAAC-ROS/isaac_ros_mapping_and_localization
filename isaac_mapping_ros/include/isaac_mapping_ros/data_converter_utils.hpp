@@ -80,6 +80,28 @@ struct CameraTopicConfig
   bool swap_rb_channels = false;     // If true, swap R and B channels (RGB<->BGR)
 };
 
+// Point cloud structures and functions
+struct PointCloudPoint
+{
+  float x, y, z;
+  uint32_t t_offset_nanoseconds;  // timestamp offset in nanoseconds
+};
+
+struct LidarMetadata
+{
+  std::string sensor_name;
+  std::string frame_id;
+  nvidia::isaac::common::transform::SE3TransformD lidar_to_vehicle_transform;
+  double average_num_points_per_frame = 0.0;
+  std::vector<uint64_t> timestamps_nanoseconds;
+  bool motion_compensated = false;
+
+  // Sensor metadata fields
+  uint32_t sensor_id = 0;
+  std::string sensor_type = "LIDAR";
+  double frequency = 0.0;  // Hz
+};
+
 // Returns the mapping from camera info topic name to camera topic config based on topic name
 std::map<std::string,
   data_converter_utils::CameraTopicConfig> GetTopicConfigByTopicName(
@@ -93,8 +115,8 @@ bool ReadCameraTopicConfig(
 std::map<std::string, std::string> GetTopicNameToMessageTypeMap(
   const rosbag2_storage::BagMetadata & metadata);
 
-bool AddStaticTransformToBuffer(
-  const std::string & sensor_data_bag, tf2_ros::Buffer & tf_buffer);
+bool AddTfTransformsToBuffer(
+  const std::string & sensor_data_bag, tf2_ros::Buffer & tf_buffer, bool use_tf_topic = false);
 
 std::optional<nvidia::isaac::common::transform::SE3TransformD> GetRelativeTransformFromTFBuffer(
   const tf2_ros::Buffer & tf_buffer, const std::string & source_frame,
@@ -150,6 +172,12 @@ nvidia::isaac::common::transform::SE3PoseLinearInterpolator ExtractPosesFromBag(
   const std::string & pose_bag_file, const std::string & pose_topic_name,
   const std::string & expected_child_frame_id = "");
 
+// Extract pose interpolator from TF messages in a bag file
+nvidia::isaac::common::transform::SE3PoseLinearInterpolator ExtractPoseInterpolatorFromTF(
+  const std::string & bag_file,
+  const std::string & parent_frame,
+  const std::string & child_frame);
+
 // if bag does not exists, it will crash, usually used at main function
 void CheckBagExists(const std::string & bag_file);
 
@@ -183,6 +211,23 @@ uint64_t ROSTimestampToMicroseconds(
 
 uint64_t ROSTimestampToNanoseconds(
   const builtin_interfaces::msg::Time & stamp);
+
+
+// Extract point clouds from ROS2 bag file to PLY binary files
+bool ExtractPointCloudsFromRosbag(
+  const std::string & sensor_data_bag,
+  const std::string & point_cloud_topic,
+  const std::string & output_folder,
+  const std::string & base_link_name,
+  const std::string & reference_pose_frame,
+  bool do_motion_compensate,
+  LidarMetadata & lidar_metadata);
+
+// Write point cloud to PLY binary file
+bool WritePointCloudToPLY(
+  const std::string & ply_file_path,
+  const std::vector<PointCloudPoint> & points,
+  bool include_timestamp = true);
 
 }  // namespace data_converter_utils
 }  // namespace isaac_mapping_ros
