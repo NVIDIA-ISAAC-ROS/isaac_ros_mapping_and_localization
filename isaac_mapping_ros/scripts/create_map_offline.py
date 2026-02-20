@@ -21,6 +21,7 @@ import argparse
 import math
 import os
 import pathlib
+import shutil
 import subprocess
 from datetime import datetime, timedelta
 
@@ -37,6 +38,7 @@ from create_map_utils import (
     build_cuvslam_command_api_launcher,
     build_nvblox_command,
 )
+from pose_loader import load_optimized_keyframe_min_max_z
 
 ROS_WS = pathlib.Path(os.environ.get('ISAAC_ROS_WS'))
 VISUAL_MAPPING_PACKAGE_NAME = 'isaac_ros_visual_mapping'
@@ -173,6 +175,13 @@ def parse_args():
         choices=['ess', 'foundationstereo'],
     )
     parser.add_argument(
+        '--fs_model_res',
+        type=str,
+        default='high_res',
+        help='Foundation Stereo model resolution (low_res or high_res)',
+        choices=['low_res', 'high_res'],
+    )
+    parser.add_argument(
         '--use_cusfm',
         type=arg_utils.str_to_bool,
         nargs='?',
@@ -187,6 +196,14 @@ def parse_args():
         const=True,
         default=True,
         help='Skip final cuvslam map creation in CUSFM workflow',
+    )
+    parser.add_argument(
+        '--adjust_nvblox_bounds_by_kf_pose',
+        type=arg_utils.str_to_bool,
+        nargs='?',
+        const=True,
+        default=True,
+        help='Adjust nvblox z bounds using optimized keyframe min/max z',
     )
     parser.add_argument(
         '--vgl_model_dir',
@@ -325,13 +342,14 @@ def main():
     if 'depth' in steps_to_run:
         depth_timeout = math.ceil(num_map_frames * 0.15 + 60) if num_map_frames > 0 else 60
         run_depth_inference(map_frames_rectified_dir, map_frames_depth_dir, final_meta_file,
-                            log_folder, args.print_mode, depth_timeout, args.depth_model)
+                            log_folder, args.print_mode, depth_timeout, args.depth_model,
+                            args.fs_model_res)
 
     if 'occupancy' in steps_to_run:
         nvblox_timeout = math.ceil(num_map_frames * 0.07) if num_map_frames > 0 else 60
         create_occupancy_map(output_folder, map_frames_rectified_dir, map_frames_depth_dir,
                              final_meta_file, log_folder, args.print_mode, nvblox_timeout,
-                             map_config['nvblox'])
+                             map_config['nvblox'], args.adjust_nvblox_bounds_by_kf_pose)
 
     if 'transform_map' in steps_to_run:
         if args.use_cusfm:
@@ -459,15 +477,35 @@ def create_cuvslam_map(
         raise ValueError("map_config is required")
     if not map_config.get('cuvslam'):
         raise ValueError("cuvslam config is required")
+    cuvslam_config = map_config.get('cuvslam', {})
+    vslam_run_pose_dir = output_cuvslam_poses_dir / 'runs'
+    vslam_run_pose_dir.mkdir(parents=True, exist_ok=True)
     run_cuvslam_api_launcher(edex_path=edex_path,
                              output_map_dir=output_cuvslam_map_dir,
-                             output_poses_dir=output_cuvslam_poses_dir,
+                             output_poses_dir=vslam_run_pose_dir,
                              log_folder=log_folder,
                              print_mode=print_mode,
                              timeout=timeout,
-                             cuvslam_config=map_config.get('cuvslam'),
+                             cuvslam_config=cuvslam_config,
                              use_raw_image=use_raw_image,
                              mnemonic='Create cuVSLAM map with cuvslam_api_launcher')
+    repeat_count = cuvslam_config.get('repeat', 1)
+    print(f"Checking repeat count: {repeat_count}")
+    if repeat_count > 1:
+        print(f"Processing repeated poses for {repeat_count} runs...")
+        process_repeated_poses(
+            edex_path,
+            vslam_run_pose_dir,
+            output_cuvslam_poses_dir,
+            repeat_count,
+            log_folder,
+            print_mode,
+        )
+    else:
+        for file in vslam_run_pose_dir.iterdir():
+            if file.is_file() and not file.name.startswith('.'):
+                shutil.copy2(file, output_cuvslam_poses_dir / file.name)
+        print(f"Repeat count is 1, copied VSLAM run poses to {output_cuvslam_poses_dir}")
 
 
 def select_map_frames(input_frames_meta_file: pathlib.Path, output_frames_meta_file: pathlib.Path,
@@ -549,7 +587,8 @@ def run_depth_inference(color_img_dir: pathlib.Path,
                         log_folder: pathlib.Path,
                         print_mode: str,
                         timeout: int,
-                        depth_model: str = 'foundationstereo'):
+                        depth_model: str = 'foundationstereo',
+                        fs_model_res: str = 'high_res'):
     # Validate required directories and files exist
     if not color_img_dir.exists():
         raise RuntimeError(
@@ -565,14 +604,19 @@ def run_depth_inference(color_img_dir: pathlib.Path,
             f"Cannot run depth inference: Metadata file {frames_meta_file} does not exist. "
             f"Run 'compute_poses' step first.")
 
-    if depth_model == 'foundationstereo':
-        script_name = 'run_foundationstereo_trt_offline.py'
-        mnemonic = 'Run Foundation Stereo inference'
-        log_file = 'run_foundationstereo_inference.log'
-    else:
+    # Determine script and model resolution based on depth_model
+    if depth_model == 'ess':
         script_name = 'run_ess_trt_offline.py'
         mnemonic = 'Run ESS inference'
         log_file = 'run_ess_inference.log'
+        model_res = None
+    elif depth_model == 'foundationstereo':
+        script_name = 'run_foundationstereo_trt_offline.py'
+        mnemonic = 'Run Foundation Stereo inference'
+        log_file = 'run_foundationstereo_inference.log'
+        model_res = fs_model_res
+    else:
+        raise ValueError(f"Invalid depth_model: {depth_model}")
 
     command = [
         'ros2',
@@ -583,6 +627,8 @@ def run_depth_inference(color_img_dir: pathlib.Path,
         f'--output_dir={depth_img_dir}',
         f'--frames_meta_file={frames_meta_file}',
     ]
+    if model_res is not None:
+        command.append(f'--model_res={model_res}')
     subprocess_utils.run_command(
         mnemonic=mnemonic,
         command=command,
@@ -595,7 +641,7 @@ def run_depth_inference(color_img_dir: pathlib.Path,
 def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
                          depth_img_dir: pathlib.Path, frames_meta_file: pathlib.Path,
                          log_folder: pathlib.Path, print_mode: str, timeout: int,
-                         nvblox_config: dict):
+                         nvblox_config: dict, adjust_nvblox_bounds_by_kf_pose: bool):
     # Validate required directories and files exist
     if not color_img_dir.exists():
         raise RuntimeError(
@@ -612,6 +658,25 @@ def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
             f"Cannot create occupancy map: Metadata file {frames_meta_file} does not exist. "
             f"Run 'compute_poses' step first.")
 
+    if adjust_nvblox_bounds_by_kf_pose:
+        min_max_z = load_optimized_keyframe_min_max_z(str(output_dir))
+        if min_max_z is None:
+            raise RuntimeError(
+                'Optimized keyframe pose missing; cannot create occupancy map.'
+            )
+
+        min_z, max_z = min_max_z
+        nvblox_config['ground_points_candidates_min_z_m'] += min_z
+        nvblox_config['workspace_bounds_min_height_m'] += min_z
+        nvblox_config['workspace_bounds_max_height_m'] += max_z
+        print(f"Adjusted nvblox z bounds using optimized keyframe min/max z: {min_z} to {max_z}:")
+        ground_points_min_z = nvblox_config['ground_points_candidates_min_z_m']
+        workspace_min_z = nvblox_config['workspace_bounds_min_height_m']
+        workspace_max_z = nvblox_config['workspace_bounds_max_height_m']
+        print(f"  ground_points_candidates_min_z_m: {ground_points_min_z}")
+        print(f"  workspace_bounds_min_height_m: {workspace_min_z}")
+        print(f"  workspace_bounds_max_height_m: {workspace_max_z}")
+
     occupancy_map_path = f'{output_dir}/occupancy_map'
     mesh_output_path = f'{output_dir}/mesh.ply'
     base_command = [
@@ -626,7 +691,7 @@ def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
         f'--mesh_output_path={mesh_output_path}',
     ]
 
-    command = build_nvblox_command(base_command, nvblox_config)
+    command = build_nvblox_command(base_command, nvblox_config, output_dir)
 
     subprocess_utils.run_command(
         mnemonic='Run Nvblox',
@@ -890,15 +955,6 @@ def run_standard_workflow(edex_path: pathlib.Path, output_folder: pathlib.Path,
     output_cuvslam_poses_dir.mkdir(parents=True, exist_ok=True)
     create_cuvslam_map(edex_path, output_cuvslam_map_dir, output_cuvslam_poses_dir, log_folder,
                        print_mode, cuvslam_timeout, map_config, use_raw_image)
-    cuvslam_config = map_config.get('cuvslam', {})
-    repeat_count = cuvslam_config.get('repeat', 1)
-    print(f"Checking repeat count: {repeat_count}")
-    if repeat_count > 1:
-        print(f"Processing repeated poses for {repeat_count} runs...")
-        process_repeated_poses(edex_path, output_cuvslam_poses_dir, repeat_count, log_folder,
-                               print_mode)
-    else:
-        print(f"Repeat count is {repeat_count}, skipping repeated poses processing")
     cuvslam_odom_tum_file = output_cuvslam_poses_dir / 'odom_poses.tum'
     cuvslam_kf_tum_file = output_cuvslam_poses_dir / 'keyframe_pose.tum'
     cuvslam_kf_optimized_tum_file = output_cuvslam_poses_dir / 'keyframe_pose_optimized.tum'
@@ -941,22 +997,22 @@ def run_standard_workflow(edex_path: pathlib.Path, output_folder: pathlib.Path,
     print("=== Standard Workflow Complete ===")
 
 
-def process_repeated_poses(edex_path: pathlib.Path, output_poses_dir: pathlib.Path,
-                           repeat_count: int, log_folder: pathlib.Path, print_mode: str):
-    mapping_scripts_dir = pathlib.Path(os.environ.get('ISAAC_ROS_WS')) / 'src' / \
-        'isaac_ros_mapping_and_localization' / 'isaac_mapping_ros' / 'scripts'
-    split_script = mapping_scripts_dir / 'split_repeated_poses.py'
-    if not split_script.exists():
-        print(f"Warning: split_repeated_poses.py script not found at {split_script}")
-        return
+def process_repeated_poses(
+        edex_path: pathlib.Path,
+        vslam_run_poses_dir: pathlib.Path,
+        output_poses_dir: pathlib.Path,
+        repeat_count: int,
+        log_folder: pathlib.Path,
+        print_mode: str,
+):
     subprocess_utils.run_command(
         mnemonic='Split repeated pose files',
         command=[
-            'python3',
-            str(split_script), '--poses_dir',
-            str(output_poses_dir), '--edx_dir',
+            'ros2', 'run', 'isaac_mapping_ros', 'split_repeated_poses.py', '--poses_dir',
+            str(vslam_run_poses_dir), '--edx_dir',
             str(edex_path), '--repeat_count',
-            str(repeat_count)
+            str(repeat_count), '--output_dir',
+            str(output_poses_dir)
         ],
         log_file=log_folder / 'split_repeated_poses.log',
         print_mode=print_mode,
@@ -965,19 +1021,12 @@ def process_repeated_poses(edex_path: pathlib.Path, output_poses_dir: pathlib.Pa
 
 
 def generate_pose_plots(current_map_dir: pathlib.Path, log_folder: pathlib.Path, print_mode: str):
-    mapping_scripts_dir = pathlib.Path(os.environ.get('ISAAC_ROS_WS')) / 'src' / \
-        'isaac_ros_mapping_and_localization' / 'isaac_mapping_ros' / 'scripts'
-    compare_poses_script = mapping_scripts_dir / 'compare_poses.py'
-    if not compare_poses_script.exists():
-        print(f"Warning: compare_poses.py script not found at {compare_poses_script}")
-        return
     comparison_dir = current_map_dir / 'pose_comparison'
     comparison_dir.mkdir(parents=True, exist_ok=True)
     subprocess_utils.run_command(
         mnemonic='Generate pose comparison plots',
         command=[
-            'python3',
-            str(compare_poses_script), '--map_dir',
+            'ros2', 'run', 'isaac_mapping_ros', 'compare_poses.py', '--map_dir',
             str(current_map_dir), '--output',
             str(comparison_dir), '--stats'
         ],

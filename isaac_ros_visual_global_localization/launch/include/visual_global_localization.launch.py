@@ -23,12 +23,12 @@ import logging
 logger = logging.getLogger('visual_global_localization')
 
 
-def generate_nova_carter_remapping(camera_names: list[str], rectified: bool, node_name: str):
+def generate_nova_carter_remapping(camera_names: list[str], use_raw_image: bool, node_name: str):
     # Generate the remapping by assuming the following camera names
     remappings = []
     camera_id = 0
-    image_topic = 'image_rect' if rectified else 'image_raw'
-    camera_info_topic = 'camera_info_rect' if rectified else 'camera_info'
+    image_topic = 'image_raw' if use_raw_image else 'image_rect'
+    camera_info_topic = 'camera_info' if use_raw_image else 'camera_info_rect'
 
     for stereo_camera in camera_names:
         for sub_topic in ["left", "right"]:
@@ -85,8 +85,9 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Actio
         remappings = generate_remap_from_config_file(args.topic_config_file, node_name)
     else:
         camera_names = args.vgl_enabled_stereo_cameras.split(',')
+        # when vgl do rectify images is true, use raw image
         remappings = generate_nova_carter_remapping(
-            camera_names, args.vgl_rectified_images, node_name)
+            camera_names, use_raw_image=args.vgl_do_rectify_images, node_name=node_name)
 
     remapping_string = ', '.join([f'{a} -> {b}' for a, b in remappings])
 
@@ -96,11 +97,7 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Actio
     num_cameras = int(len(remappings) / 2)
 
     stereo_localizer_cam_ids = ','.join([str(i) for i in range(num_cameras)])
-    visual_localization_node = lut.ComposableNode(
-        name='visual_localization_node',
-        package='isaac_ros_visual_global_localization',
-        plugin='nvidia::isaac_ros::visual_global_localization::VisualGlobalLocalizationNode',
-        parameters=[{
+    params = {
             'num_cameras': num_cameras,
             'stereo_localizer_cam_ids': stereo_localizer_cam_ids,
             'map_dir': str(args.vgl_map_dir),
@@ -109,19 +106,36 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Actio
             'debug_dir': str(args.vgl_debug_dir),
             'debug_map_raw_dir': str(args.vgl_debug_map_raw_dir),
             'map_frame': str(args.vgl_map_frame),
-            'enable_rectify_images': not args.vgl_rectified_images,
+            'enable_rectify_images': args.vgl_do_rectify_images,
             'publish_rectified_images': args.vgl_publish_rectified_images,
             'enable_continuous_localization': args.vgl_enable_continuous_localization,
             'use_initial_guess': args.vgl_use_initial_guess,
             'publish_map_to_base_tf': args.vgl_publish_map_to_base_tf,
+            'publish_map_to_odom_tf': args.vgl_publish_map_to_odom_tf,
+            'odom_frame': args.vgl_odom_frame,
             'image_sync_match_threshold_ms': args.vgl_image_sync_match_threshold_ms,
             'verbose_logging': args.vgl_verbose_logging,
             'init_glog': args.vgl_init_glog,
             'glog_v': args.vgl_glog_v,
             'localization_precision_level': args.vgl_localization_precision_level,
-        }],
+            'vgl_enable_debug': args.vgl_enable_debug,
+            'vgl_frequency': args.vgl_frequency,
+            'base_frame': args.vgl_base_frame,
+        }
+
+    if args.vgl_camera_optical_frames != '':
+        params['camera_optical_frames'] = args.vgl_camera_optical_frames.split(',')
+
+    visual_localization_node = lut.ComposableNode(
+        name='visual_global_localization_node',
+        package='isaac_ros_visual_global_localization',
+        plugin='nvidia::isaac_ros::visual_global_localization::VisualGlobalLocalizationNode',
+        parameters=[params],
         remappings=remappings,
     )
+
+    remapping_string = ', '.join([f'{a} -> {b} \n' for a, b in remappings])
+    actions.append(lu.log_info(['VGL Using Remappings: \n', remapping_string]))
 
     actions.append(lu.log_info(['Enabling visual localization']))
     actions.append(lu.load_composable_nodes(args.container_name, [visual_localization_node]))
@@ -146,6 +160,8 @@ def generate_launch_description() -> lut.LaunchDescription:
     args.add_arg('vgl_debug_map_raw_dir', '')
     args.add_arg('vgl_map_frame', 'map')
     args.add_arg('vgl_publish_map_to_base_tf', False)
+    args.add_arg('vgl_publish_map_to_odom_tf', False)
+    args.add_arg('vgl_odom_frame', 'odom')
     args.add_arg('vgl_use_initial_guess', False)
     args.add_arg('vgl_enable_continuous_localization', False)
     args.add_arg('vgl_enable_point_cloud_filter', False)
@@ -153,10 +169,14 @@ def generate_launch_description() -> lut.LaunchDescription:
     args.add_arg('vgl_verbose_logging', False)
     args.add_arg('vgl_init_glog', False)
     args.add_arg('vgl_glog_v', 0)
-    args.add_arg('vgl_rectified_images', True)
+    args.add_arg('vgl_do_rectify_images', True)
     args.add_arg('vgl_publish_rectified_images', False)
     args.add_arg('vgl_localization_precision_level', 2)
+    args.add_arg('vgl_enable_debug', False)
+    args.add_arg('vgl_frequency', 1.0)
     args.add_arg('topic_config_file', '')
+    args.add_arg('vgl_camera_optical_frames', '')
+    args.add_arg('vgl_base_frame', 'base_link')
 
     args.add_opaque_function(add_visual_global_localization)
 

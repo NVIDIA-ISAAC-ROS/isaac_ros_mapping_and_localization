@@ -18,6 +18,7 @@
 #include "isaac_ros_visual_global_localization/transform_manager.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -43,7 +44,7 @@ TransformManager::TransformManager(rclcpp::Node * node)
 
   // Init the transform listeners if we ARE using TF at all.
   if (use_tf_transforms_) {
-    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock());
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock(), tf2::Duration(std::chrono::seconds(60)));
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 

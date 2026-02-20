@@ -90,6 +90,60 @@ VisualGlobalLocalizationNode::VisualGlobalLocalizationNode(const rclcpp::NodeOpt
   advertiseServices();
 }
 
+void VisualGlobalLocalizationNode::printConfiguration()
+{
+  std::stringstream ss;
+
+  ss << "\n=== Visual Global Localization Configuration ===\n";
+
+  // Directory settings
+  ss << "map_dir: " << map_dir_ << "\n";
+  ss << "config_dir: " << config_dir_ << "\n";
+  ss << "debug_dir: " << debug_dir_ << "\n";
+  ss << "model_dir: " << model_dir_ << "\n";
+  ss << "debug_map_raw_dir: " << debug_map_raw_dir_ << "\n";
+
+  // Camera settings
+  ss << "num_cameras: " << num_cameras_ << "\n";
+  ss << "stereo_localizer_cam_ids: " << stereo_localizer_cam_ids_ << "\n";
+  ss << "enable_rectify_images: " << (enable_rectify_images_ ? "true" : "false") << "\n";
+  ss << "publish_rectified_images: " << (publish_rectified_images_ ? "true" : "false") << "\n";
+
+  // Localization settings
+  ss << "enable_continuous_localization: " << (enable_continuous_localization_ ? "true" : "false") << "\n";
+  ss << "use_initial_guess: " << (use_initial_guess_ ? "true" : "false") << "\n";
+  ss << "localization_precision_level: " << localization_precision_level_ << "\n";
+  ss << "vgl_frequency: " << vgl_frequency_ << "\n";
+
+  // Image processing settings
+  ss << "image_qos_profile: " << image_qos_profile_ << "\n";
+  ss << "image_sync_match_threshold_ms: " << image_sync_match_threshold_ms_ << "\n";
+  ss << "image_buffer_size: " << image_buffer_size_ << "\n";
+  ss << "input_image_topic_name: " << input_image_topic_name_ << "\n";
+  ss << "input_camera_info_topic_name: " << input_camera_info_topic_name_ << "\n";
+
+  // Frame settings
+  ss << "base_frame: " << base_frame_ << "\n";
+  ss << "map_frame: " << map_frame_ << "\n";
+  ss << "odom_frame: " << odom_frame_ << "\n";
+
+  // Transform settings
+  ss << "publish_map_to_base_tf: " << (publish_map_to_base_tf_ ? "true" : "false") << "\n";
+  ss << "invert_map_to_base_tf: " << (invert_map_to_base_tf_ ? "true" : "false") << "\n";
+  ss << "publish_map_to_odom_tf: " << (publish_map_to_odom_tf_ ? "true" : "false") << "\n";
+
+  // Debug settings
+  ss << "verbose_logging: " << (verbose_logging_ ? "true" : "false") << "\n";
+  ss << "vgl_enable_debug: " << (vgl_enable_debug_ ? "true" : "false") << "\n";
+  ss << "init_glog: " << (init_glog_ ? "true" : "false") << "\n";
+  ss << "glog_v: " << glog_v_ << "\n";
+
+  ss << "=== End Visual Global Localization Configuration ===";
+
+  // Print the entire configuration in one atomic log message
+  RCLCPP_INFO(get_logger(), "%s", ss.str().c_str());
+}
+
 void VisualGlobalLocalizationNode::getParameters()
 {
   // Declare & initialize the parameters.
@@ -126,13 +180,21 @@ void VisualGlobalLocalizationNode::getParameters()
     "publish_map_to_base_tf",
     publish_map_to_base_tf_);
   invert_map_to_base_tf_ = declare_parameter<bool>("invert_map_to_base_tf", invert_map_to_base_tf_);
+  publish_map_to_odom_tf_ = declare_parameter<bool>(
+    "publish_map_to_odom_tf",
+    publish_map_to_odom_tf_);
+  odom_frame_ = declare_parameter<std::string>("odom_frame", odom_frame_);
   verbose_logging_ = declare_parameter<bool>("verbose_logging", verbose_logging_);
+  vgl_enable_debug_ = declare_parameter<bool>("vgl_enable_debug", vgl_enable_debug_);
   init_glog_ = declare_parameter<bool>("init_glog", init_glog_);
   glog_v_ = declare_parameter<int>("glog_v", glog_v_);
   localization_precision_level_ = declare_parameter<int>(
     "localization_precision_level",
     localization_precision_level_);
+  vgl_frequency_ = declare_parameter<double>("vgl_frequency", 1.0);
   transform_manager_.set_reference_frame(base_frame_);
+  camera_optical_frames_ = declare_parameter<std::vector<std::string>>(
+    "camera_optical_frames", std::vector<std::string>{});
   // Check if the parameters are set correctly
   if (config_dir_.empty()) {
     RCLCPP_ERROR(get_logger(), "Config directory is not set");
@@ -143,6 +205,14 @@ void VisualGlobalLocalizationNode::getParameters()
   if (num_cameras_ < 1) {
     RCLCPP_ERROR(get_logger(), "Invalid num_cameras: %d", num_cameras_);
   }
+  if (!camera_optical_frames_.empty() &&
+      camera_optical_frames_.size() != static_cast<size_t>(num_cameras_)) {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Invalid camera_optical_frames: %zu != %d",
+      camera_optical_frames_.size(), num_cameras_);
+  }
+  
 
   if (init_glog_) {
     google::InitGoogleLogging(this->get_name());
@@ -165,6 +235,14 @@ void VisualGlobalLocalizationNode::getParameters()
     std::bind(
       &VisualGlobalLocalizationNode::callbackSynchronizedImages, this,
       std::placeholders::_2));
+
+  if (vgl_frequency_ <= 0) {
+    RCLCPP_ERROR(get_logger(), "vgl_frequency must be greater than 0");
+    vgl_frequency_ = 1.0;
+  }
+
+  // Print the complete configuration
+  printConfiguration();
 }
 
 void VisualGlobalLocalizationNode::initLocalizerApi()
@@ -210,6 +288,15 @@ void VisualGlobalLocalizationNode::initLocalizerApi()
       RCLCPP_ERROR_STREAM(
         get_logger(), "Can't set debug_map_raw_dir to " << debug_map_raw_dir_);
     }
+  }
+  // Set debug mode based on vgl_enable_debug flag
+  RCLCPP_INFO_STREAM(get_logger(), "Setting debug mode to: " << (vgl_enable_debug_ ? "enabled" : "disabled")
+                     << " (vgl_enable_debug_ = " << vgl_enable_debug_ << ")");
+  auto debug_status = cuvgl_->set_enable_debug(vgl_enable_debug_);
+  if (!debug_status.ok()) {
+    RCLCPP_ERROR_STREAM(get_logger(), "Failed to set debug mode: " << debug_status.message());
+  } else {
+    RCLCPP_INFO_STREAM(get_logger(), "Successfully set debug mode");
   }
   cuvgl_->set_localization_precision_level(localization_precision_level_);
 }
@@ -323,6 +410,19 @@ void VisualGlobalLocalizationNode::callbackSynchronizedImages(
     return;
   }
 
+  // Frequency throttling
+  rclcpp::Time current_time = this->now();
+  if (!last_processing_time_.nanoseconds()) {
+    last_processing_time_ = current_time;
+  } else {
+    double time_since_last_process = (current_time - last_processing_time_).seconds();
+    double min_interval = 1.0 / vgl_frequency_;
+    if (time_since_last_process < min_interval) {
+      return;  // Skip processing to maintain frequency limit
+    }
+  }
+  last_processing_time_ = current_time;
+
   std::unordered_map<std::string, std::shared_ptr<ImageType>> images;
   for (const auto & [idx, image] : idx_and_image_msgs) {
     images[image.GetFrameId()] = std::make_shared<ImageType>(image);
@@ -338,6 +438,10 @@ void VisualGlobalLocalizationNode::callbackSynchronizedImages(
     // Publish the TF base_link_T_map
     if (publish_map_to_base_tf_) {
       publishTF(timestamp, localization_pose);
+    }
+    // Publish the map-to-odom TF
+    if (publish_map_to_odom_tf_) {
+      publishMapToOdomTF(timestamp, localization_pose);
     }
     // Publish the pose
     publishPose(timestamp, localization_pose);
@@ -368,7 +472,7 @@ bool VisualGlobalLocalizationNode::processImages(
 {
   // Initialize the image rectifier
   if (enable_rectify_images_ && !checkImageRectifier(images)) {
-    RCLCPP_ERROR(get_logger(), "Failed to initialize image rectifier");
+    RCLCPP_ERROR(get_logger(), "Image rectifier is not ready");
     return false;
   }
 
@@ -404,21 +508,19 @@ bool VisualGlobalLocalizationNode::processImages(
 
   std::vector<isaac::common::transform::SE3TransformD> initial_world_T_cameras;
   if (use_initial_guess_ && !bootstrap_localization_) {
-    INFO_STREAM(verbose_logging_, "Predicting the transform by odometry");
+    INFO_STREAM(verbose_logging_, "Querying direct camera to map transform");
     for (const auto & image: images) {
       const std::string frame_id = image.first;
-      const Transform map_T_camera_eigen = transform_manager_.predictTransformByOdom(
-        map_frame_, frame_id,
-        previous_processed_image_time_,
-        timestamp);
-      if (!map_T_camera_eigen.isApprox(Eigen::Isometry3f::Identity())) {
+      // Directly query the current map→camera transform instead of complex odometry prediction
+      Transform map_T_camera_eigen;
+      if (transform_manager_.lookupTransformTf(map_frame_, frame_id, timestamp, &map_T_camera_eigen)) {
         isaac::common::transform::SE3TransformD map_T_camera;
         convertEigenToTransform(map_T_camera_eigen, map_T_camera);
         initial_world_T_cameras.emplace_back(map_T_camera);
       } else {
         RCLCPP_WARN_STREAM(
           get_logger(),
-          "Failed to predict transform for frame_id: " << frame_id <<
+          "Failed to lookup direct transform for frame_id: " << frame_id <<
             ", it will use global localization");
         initial_world_T_cameras.clear();
         break;
@@ -436,15 +538,24 @@ bool VisualGlobalLocalizationNode::processImages(
     }
     INFO_STREAM(verbose_logging_, "cuSFM-based localization");
   }
+
   const auto status = cuvgl_->Localize(camera_images, localization_pose);
-  // If debug_dir_ is set, publish the debug image
-  if (!use_initial_guess_ && !debug_dir_.empty() && !debug_map_raw_dir_.empty()) {
+
+  RCLCPP_INFO_STREAM(get_logger(), "Localization completed with status: " << status.ok()
+                     << ", vgl_enable_debug_: " << vgl_enable_debug_);
+
+  // If debug mode is enabled, publish the debug image
+  if (vgl_enable_debug_) {
+    RCLCPP_INFO_STREAM(get_logger(), "Attempting to get debug image...");
     cv::Mat debug_image;
     auto debug_status = cuvgl_->GetDebugImage(debug_image);
     if (!debug_status.ok()) {
       RCLCPP_WARN_STREAM(get_logger(), "Failed to get debug images: " << debug_status.message());
+    } else {
+      RCLCPP_INFO_STREAM(get_logger(), "Got debug image, size: " << debug_image.rows << "x" << debug_image.cols);
     }
     if (!debug_image.empty()) {
+      RCLCPP_INFO_STREAM(get_logger(), "Publishing debug image...");
       cv_bridge::CvImage cv_image;
       cv_image.image = debug_image;
       cv_image.encoding = sensor_msgs::image_encodings::RGB8;
@@ -452,6 +563,9 @@ bool VisualGlobalLocalizationNode::processImages(
       cv_image.header.frame_id = base_frame_;
       sensor_msgs::msg::Image::SharedPtr debug_image_msg = cv_image.toImageMsg();
       debug_image_pub_->publish(*debug_image_msg);
+      RCLCPP_INFO_STREAM(get_logger(), "Debug image published successfully");
+    } else {
+      RCLCPP_WARN_STREAM(get_logger(), "Debug image is empty, not publishing");
     }
   }
 
@@ -510,6 +624,10 @@ cameraInfoToMonoParams(
     const_cast<double *>(camera_info.d.data()));
   cv::Mat rectification_matrix(3, 3, CV_64F, const_cast<double *>(camera_info.r.data()));
   cv::Mat projection_matrix(3, 4, CV_64F, const_cast<double *>(camera_info.p.data()));
+  projection_matrix.at<double>(0, 3) = 0;
+  projection_matrix.at<double>(1, 3) = 0;
+  projection_matrix.at<double>(2, 3) = 1;
+
   params.camera_matrix_ = camera_matrix;
   params.distortion_coefficients_ = distortion_coefficients;
   params.rectification_matrix_ = rectification_matrix;
@@ -522,7 +640,19 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
   camera_params_id_t camera_id)
 {
   const auto & camera_info_msg = *camera_info_ptr;
-  if (camera_params_.count(camera_info_msg.header.frame_id) == 1) {
+
+  std::string frame_id = camera_info_msg.header.frame_id;
+  if (!camera_optical_frames_.empty()) {
+    if (static_cast<size_t>(camera_id) >= camera_optical_frames_.size()) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Camera id %d is out of range for camera optical frames",
+        camera_id);
+      return;
+    }
+    frame_id = camera_optical_frames_.at(camera_id);
+  }
+  if (camera_params_.count(frame_id) == 1) {
     return;
   }
   const auto params = cameraInfoToMonoParams(camera_info_msg);
@@ -539,14 +669,17 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
     if (!image_rectifier->Init(params)) {
       RCLCPP_ERROR_STREAM(
         get_logger(),
-        "Failed to initialize image rectifier for " << camera_info_msg.header.frame_id);
+        "Failed to initialize image rectifier for " << frame_id);
       return;
+    }else{
+      RCLCPP_INFO_STREAM(get_logger(), "Image rectifier initialized for " << frame_id);
     }
-    image_rectifiers_[camera_info_msg.header.frame_id] = std::move(image_rectifier);
+
+    image_rectifiers_[frame_id] = std::move(image_rectifier);
 
     // save the rectified camera info to be published along with rectified image
     if (publish_rectified_images_) {
-      rectified_camera_infos_[camera_info_msg.header.frame_id] = GetRectifiedCameraInfo(
+      rectified_camera_infos_[frame_id] = GetRectifiedCameraInfo(
         camera_info_msg);
     }
   }
@@ -554,22 +687,24 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
   Transform baselink_T_camera_eigen;
   // Get the latest transform from the camera frame to the base frame
   if (!transform_manager_.lookupTransformToReferenceFrame(
-      camera_info_msg.header.frame_id, rclcpp::Time(0),
+      frame_id, rclcpp::Time(0),
       &baselink_T_camera_eigen))
   {
     RCLCPP_ERROR(
       get_logger(), "Failed to get transform for frame_id: %s",
-      camera_info_msg.header.frame_id.c_str());
+      frame_id.c_str());
     return;
   }
   isaac::common::transform::SE3TransformD baselink_T_camera;
   convertEigenToTransform(baselink_T_camera_eigen, baselink_T_camera);
+  // TODO(ydeng): add the rectification matrix in rectified_camera_to_vehicle transform
 
   protos::common::sensor::CameraSensor sensors;
   sensors.mutable_calibration_parameters()->CopyFrom(params.ToProto());
   // Rectified images are undistorted, so use PINHOLE model
   sensors.set_camera_projection_model_type(protos::common::sensor::CameraProjectionModelType::PINHOLE);
 
+  // cuvgl uses 3x3 projection matrix
   const auto status = cuvgl_->AddCamera(camera_id, baselink_T_camera, sensors);
   if (!status.ok()) {
     RCLCPP_ERROR_STREAM(
@@ -577,8 +712,8 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
     return;
   }
 
-  camera_params_[camera_info_msg.header.frame_id] = params;
-  camera_frame_id_to_camera_ids_[camera_info_msg.header.frame_id] = camera_id;
+  camera_params_[frame_id] = params;
+  camera_frame_id_to_camera_ids_[frame_id] = camera_id;
 }
 
 bool VisualGlobalLocalizationNode::checkImageRectifier(
@@ -664,6 +799,50 @@ void VisualGlobalLocalizationNode::publishTF(
     convertSE3ToRosTransform(localization_pose, transform_msg.transform);
   }
   tf_broadcaster_->sendTransform(transform_msg);
+}
+
+void VisualGlobalLocalizationNode::publishMapToOdomTF(
+  const rclcpp::Time & timestamp,
+  const isaac::common::transform::SE3TransformD & localization_pose)
+{
+  // Get the transform from odom to base_link using transform manager
+  Transform odom_T_base_eigen;
+  bool success = transform_manager_.lookupTransformTf(
+    odom_frame_, base_frame_, timestamp, &odom_T_base_eigen);
+
+  if (success) {
+    // Convert Eigen transform to SE3Transform
+    isaac::common::transform::SE3TransformD odom_T_base;
+    convertEigenToTransform(odom_T_base_eigen, odom_T_base);
+
+    // Compute map_T_odom = map_T_base * base_T_odom
+    // where base_T_odom = (odom_T_base)^(-1)
+    isaac::common::transform::SE3TransformD map_T_odom = localization_pose * odom_T_base.Inverse();
+
+    // Publish the map-to-odom transform
+    geometry_msgs::msg::TransformStamped map_to_odom_msg;
+    map_to_odom_msg.header.stamp = timestamp;
+    map_to_odom_msg.header.frame_id = map_frame_;
+    map_to_odom_msg.child_frame_id = odom_frame_;
+    convertSE3ToRosTransform(map_T_odom, map_to_odom_msg.transform);
+    tf_broadcaster_->sendTransform(map_to_odom_msg);
+
+    INFO_STREAM(verbose_logging_,
+      "Published map-to-odom transform: translation=["
+      << map_T_odom.translation().x() << ", "
+      << map_T_odom.translation().y() << ", "
+      << map_T_odom.translation().z() << "], rotation=["
+      << map_T_odom.rotation().w() << ", "
+      << map_T_odom.rotation().x() << ", "
+      << map_T_odom.rotation().y() << ", "
+      << map_T_odom.rotation().z() << "]");
+
+  } else {
+    RCLCPP_WARN_STREAM(
+      get_logger(),
+      "Could not get transform from " << odom_frame_ << " to " << base_frame_
+      << ". Skipping map-to-odom transform publication.");
+  }
 }
 
 void VisualGlobalLocalizationNode::publishPose(

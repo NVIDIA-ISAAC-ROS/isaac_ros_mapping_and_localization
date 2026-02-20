@@ -1,0 +1,188 @@
+{
+  "configById": {
+    "3D!hp66ed": {
+      "cameraState": {
+        "perspective": false,
+        "distance": 14.701837812499079,
+        "phi": 59.99999999999999,
+        "thetaOffset": 45.000000000001826,
+        "targetOffset": [
+          -0.2576859949232683,
+          0.9629318757660214,
+          4.2588509193420807e-17
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {
+        "transforms": {
+          "labelSize": 0.11,
+          "axisSize": 0.4
+        }
+      },
+      "transforms": {
+        "frame:camera_link": {
+          "visible": true
+        },
+        "frame:camera_aligned_depth_to_infra1_frame": {
+          "visible": false
+        },
+        "frame:camera_infra1_optical_frame": {
+          "visible": true
+        },
+        "frame:camera_infra1_frame": {
+          "visible": false
+        },
+        "frame:camera_infra2_frame": {
+          "visible": false
+        },
+        "frame:camera_infra2_optical_frame": {
+          "visible": false
+        }
+      },
+      "topics": {
+        "/map": {
+          "visible": true
+        },
+        "/visual_slam/tracking/vo_path": {
+          "visible": true,
+          "gradient": [
+            "#abff6bff",
+            "#ff886b80"
+          ]
+        },
+        "/visual_slam/tracking/slam_path": {
+          "visible": true
+        },
+        "/visual_localization/pose": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "880de65e-6d85-4aed-9f4f-14d2baa25925",
+          "layerId": "foxglove.Grid",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#248eff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "frameId": "omap"
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {},
+      "followTf": "omap"
+    },
+    "DiagnosticStatusPanel!22vf50": {
+      "topicToRender": "/diagnostics",
+      "selectedHardwareId": "visual_slam",
+      "selectedName": "Visual Slam Diagnostics"
+    },
+    "RawMessages!4184qh4": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/visual_slam/tracking/slam_path.poses[-1]",
+      "fontSize": 12
+    },
+    "Image!25um7tz": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {
+        "imageTopic": "/realsense/left/image_rect",
+        "calibrationTopic": "/realsense/left/camera_info_rect"
+      }
+    }
+  },
+  "layout": {
+    "first": {
+      "first": "3D!hp66ed",
+      "second": "DiagnosticStatusPanel!22vf50",
+      "direction": "column"
+    },
+    "second": {
+      "first": "Image!25um7tz",
+      "second": "RawMessages!4184qh4",
+      "direction": "column"
+    },
+    "direction": "row"
+  },
+  "globalVariables": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "userNodes": {}
+}

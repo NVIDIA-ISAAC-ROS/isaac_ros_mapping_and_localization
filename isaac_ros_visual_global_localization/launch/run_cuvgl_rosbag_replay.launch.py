@@ -72,26 +72,56 @@ def create_decoder_nodes(camera_list: list[str]):
     return nodes
 
 
-def create_rectify_node(name: str, identifier: str):
+def create_rectify_node(name: str, identifier: str, args: lu.ArgumentContainer):
+    remappings = []
+    if args.enable_format_converter:
+        remappings = [('image_raw', f'image_{args.desired_format}')]
+
     rectify_node = lut.ComposableNode(
         name='rectify_node',
         package='isaac_ros_image_proc',
         plugin='nvidia::isaac_ros::image_proc::RectifyNode',
         namespace=f'{name}/{identifier}',
         parameters=[{
-            'output_width': 1920,
-            'output_height': 1200,
+            'output_width': args.vgl_image_width,
+            'output_height': args.vgl_image_height,
             'type_negotiation_duration_s': 1,
         }],
+        remappings=remappings,
     )
     return rectify_node
 
 
-def create_rectify_nodes(camera_list: list[str]):
+def create_rectify_nodes(camera_list: list[str], args: lu.ArgumentContainer):
     nodes = []
     for camera_name in camera_list:
-        nodes.append(create_rectify_node(camera_name, 'left'))
-        nodes.append(create_rectify_node(camera_name, 'right'))
+        nodes.append(create_rectify_node(camera_name, 'left', args))
+        nodes.append(create_rectify_node(camera_name, 'right', args))
+    return nodes
+
+
+def create_format_converter_node(name: str, identifier: str, args: lu.ArgumentContainer):
+    remappings = [('image', f'image_{args.desired_format}')]
+    reformat_node = lut.ComposableNode(
+        name=f'reformat_node_{args.desired_format}',
+        package='isaac_ros_image_proc',
+        plugin='nvidia::isaac_ros::image_proc::ImageFormatConverterNode',
+        namespace=f'{name}/{identifier}',
+        parameters=[{
+            'image_width': args.vgl_image_width,
+            'image_height': args.vgl_image_height,
+            'type_negotiation_duration_s': 1,
+            'encoding_desired': args.desired_format,
+        }],
+        remappings=remappings)
+    return reformat_node
+
+
+def create_format_converter_nodes(camera_list: list[str], args: lu.ArgumentContainer):
+    nodes = []
+    for camera_name in camera_list:
+        nodes.append(create_format_converter_node(camera_name, 'left', args))
+        nodes.append(create_format_converter_node(camera_name, 'right', args))
     return nodes
 
 
@@ -212,23 +242,27 @@ def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Actio
 
     camera_list = args.camera_names.split(',')
 
-    rectified_images = False
+    vgl_do_rectify_images = (not args.enable_image_rectify)
 
     if args.enable_image_decoder:
         actions.append(
             lu.load_composable_nodes(args.container_name, create_decoder_nodes(camera_list)))
 
-    if args.enable_image_rectify:
-        rectified_images = True
+    if args.enable_format_converter:
         actions.append(
-            lu.load_composable_nodes(args.container_name, create_rectify_nodes(camera_list)))
+            lu.load_composable_nodes(args.container_name,
+                                     create_format_converter_nodes(camera_list, args)))
+
+    if args.enable_image_rectify:
+        actions.append(
+            lu.load_composable_nodes(args.container_name, create_rectify_nodes(camera_list, args)))
 
     actions.append(
         lu.include('isaac_ros_visual_global_localization',
                    'launch/include/visual_global_localization.launch.py',
                    launch_arguments={
                        'vgl_enabled_stereo_cameras': args.camera_names,
-                       'vgl_rectified_images': rectified_images,
+                       'vgl_do_rectify_images': vgl_do_rectify_images,
                        'container_name': args.container_name,
                    }))
 
@@ -296,6 +330,8 @@ def generate_launch_description():
         description=(
             'If enable image rectification. If set, need to install isaac_ros_image_proc package'),
         default=False)
+    args.add_arg('enable_format_converter', cli=True,
+                 description='If enable image format converter', default=False)
     args.add_arg(
         'occupancy_map_yaml_file',
         cli=True,
@@ -341,6 +377,9 @@ def generate_launch_description():
         cli=True,
         description='If enable visualization',
         default=True)
+    args.add_arg('vgl_image_width', cli=True, description='Width of the image', default=1920)
+    args.add_arg('vgl_image_height', cli=True, description='Height of the image', default=1200)
+    args.add_arg('desired_format', cli=True, description='Desired image format', default='bgr8')
     args.add_arg(
         'replay_shutdown_on_exit',
         cli=True,
