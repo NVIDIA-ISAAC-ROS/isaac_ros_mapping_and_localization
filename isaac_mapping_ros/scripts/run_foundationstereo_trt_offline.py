@@ -26,13 +26,17 @@ import tensorrt as trt
 
 from stereo_inference_base import BaseStereoInference, BaseStereoRunner
 
+# Model input specifications based on resolution
+MODEL_SPECS = {
+    'low_res': {'width': 736, 'height': 320, 'engine': 'foundationstereo_320x736.engine'},
+    'high_res': {'width': 960, 'height': 576, 'engine': 'foundationstereo_576x960.engine'}
+}
+
+DEFAULT_MODEL_RES = 'high_res'
 DEFAULT_ENGINE_FILE_PATH = os.getenv('ISAAC_ROS_WS', ".") \
     + '/isaac_ros_assets/models/foundationstereo/' + \
-    'deployable_foundation_stereo_small_v1.0/foundationstereo_576x960.engine'
+    f'deployable_v2.0/{MODEL_SPECS[DEFAULT_MODEL_RES]["engine"]}'
 
-# Model input specifications
-MODEL_INPUT_WIDTH = 960
-MODEL_INPUT_HEIGHT = 576
 MODEL_NUM_CHANNELS = 3  # RGB channels
 
 # ImageNet normalization parameters used in Foundation Stereo
@@ -43,14 +47,18 @@ IMAGENET_STDDEV = [58.395, 57.12, 57.375]
 class FoundationStereoInference(BaseStereoInference):
     """TensorRT-based Foundation Stereo inference for stereo depth estimation."""
 
-    def __init__(self, engine_file_path, verbose=False):
+    def __init__(self, engine_file_path, model_input_width, model_input_height, verbose=False):
         """Initialize TensorRT inference engine.
 
         Args:
             engine_file_path: Path to the TensorRT engine file
+            model_input_width: Model input width in pixels
+            model_input_height: Model input height in pixels
             verbose: Enable verbose logging
         """
         super().__init__(engine_file_path, verbose)
+        self.model_input_width = model_input_width
+        self.model_input_height = model_input_height
 
     def load_plugins(self):
         """Load TensorRT plugins (Foundation Stereo doesn't require special plugins)."""
@@ -89,8 +97,8 @@ class FoundationStereoInference(BaseStereoInference):
         # Step 1: Resize with aspect ratio preservation
         # Calculate the scaling factor to fit within model input dimensions
         h, w = image.shape[:2]
-        scale_w = MODEL_INPUT_WIDTH / w
-        scale_h = MODEL_INPUT_HEIGHT / h
+        scale_w = self.model_input_width / w
+        scale_h = self.model_input_height / h
         scale = min(scale_w, scale_h)
 
         new_width = int(w * scale)
@@ -106,8 +114,8 @@ class FoundationStereoInference(BaseStereoInference):
 
         # Step 2: Pad to model input size with border replication
         # Calculate padding
-        pad_w = MODEL_INPUT_WIDTH - new_width
-        pad_h = MODEL_INPUT_HEIGHT - new_height
+        pad_w = self.model_input_width - new_width
+        pad_h = self.model_input_height - new_height
 
         # Pad with REPLICATE border type
         padded = cv2.copyMakeBorder(
@@ -200,13 +208,19 @@ class FoundationStereoRunner(BaseStereoRunner):
                  output_dir,
                  engine_file_path=DEFAULT_ENGINE_FILE_PATH,
                  frames_meta_file=None,
+                 model_res=DEFAULT_MODEL_RES,
                  verbose=False):
+        self.model_res = model_res
         super().__init__(image_dir, output_dir, engine_file_path, frames_meta_file, verbose)
 
     def create_inference_engine(self):
         """Create Foundation Stereo inference engine."""
+        model_input_width = MODEL_SPECS[self.model_res]['width']
+        model_input_height = MODEL_SPECS[self.model_res]['height']
         return FoundationStereoInference(
             engine_file_path=self.engine_file_path,
+            model_input_width=model_input_width,
+            model_input_height=model_input_height,
             verbose=self.verbose
         )
 
@@ -307,7 +321,12 @@ def parse_args():
     parser.add_argument('--engine_file_path',
                         help='Foundation Stereo engine file path',
                         type=str,
-                        default=DEFAULT_ENGINE_FILE_PATH)
+                        default=None)
+    parser.add_argument('--model_res',
+                        help='Model resolution (low_res or high_res)',
+                        type=str,
+                        choices=['low_res', 'high_res'],
+                        default=DEFAULT_MODEL_RES)
     parser.add_argument('--frames_meta_file', help='frames meta file', type=str, default=None)
     parser.add_argument('--verbose', help='Enable verbose logging', action='store_true')
     return parser.parse_args()
@@ -315,11 +334,20 @@ def parse_args():
 
 def main():
     args = parse_args()
+    # If engine_file_path is not provided, construct it from model_res
+    if args.engine_file_path is None:
+        engine_file_path = os.getenv('ISAAC_ROS_WS', ".") \
+            + '/isaac_ros_assets/models/foundationstereo/' + \
+            f'deployable_v2.0/{MODEL_SPECS[args.model_res]["engine"]}'
+    else:
+        engine_file_path = args.engine_file_path
+
     with FoundationStereoRunner(
         image_dir=args.image_dir,
         output_dir=args.output_dir,
-        engine_file_path=args.engine_file_path,
+        engine_file_path=engine_file_path,
         frames_meta_file=args.frames_meta_file,
+        model_res=args.model_res,
         verbose=args.verbose,
     ) as runner:
         runner.extract_data()

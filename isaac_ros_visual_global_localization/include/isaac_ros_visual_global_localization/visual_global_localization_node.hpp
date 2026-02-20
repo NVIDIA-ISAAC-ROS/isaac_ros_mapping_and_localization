@@ -68,6 +68,7 @@ public:
 
   // Setup functions, called by constructor
   void getParameters();
+  void printConfiguration();
   // Init localizer api
   void initLocalizerApi();
   void subscribeToTopics();
@@ -121,6 +122,12 @@ protected:
   void publishTF(
     const rclcpp::Time & timestamp,
     const isaac::common::transform::SE3TransformD & localization_pose);
+
+  // Publish map-to-odom TF message
+  void publishMapToOdomTF(
+    const rclcpp::Time & timestamp,
+    const isaac::common::transform::SE3TransformD & localization_pose);
+
   // Publish visual localization pose
   void publishPose(
     const rclcpp::Time & timestamp,
@@ -175,6 +182,8 @@ protected:
 
   bool publish_map_to_base_tf_ = false;
   bool invert_map_to_base_tf_ = false;
+  bool publish_map_to_odom_tf_ = false;
+  std::string odom_frame_ = "odom";
 
   // the QoS settings for the image input topics
   std::string image_qos_profile_;
@@ -212,8 +221,12 @@ protected:
   std::string map_frame_ = "map";
   std::string base_frame_ = "base_link";
 
+  std::vector<std::string> camera_optical_frames_;
+
   // If print more verbose ROS logs.
   bool verbose_logging_ = false;
+  // If enable debug mode for visual global localization
+  bool vgl_enable_debug_ = false;
   // If initialize glog. It can be called only once per process, otherwise it reports error.
   bool init_glog_ = false;
   // Glog level
@@ -224,6 +237,12 @@ protected:
   // 1 = medium precision
   // 0 = lowest precision (allows more results, potentially less accurate)
   int localization_precision_level_ = 2;
+
+  // Frequency (Hz) for visual global localization processing
+  double vgl_frequency_ = 10.0;
+
+  // Last processing time for frequency throttling
+  rclcpp::Time last_processing_time_;
 
   // the map of image frame id to sequence number
   std::unordered_map<std::string, uint32_t> image_frame_id_to_sequence_number_;

@@ -128,9 +128,12 @@ install(PROGRAMS
   scripts/run_foundationstereo_trt_offline.py
   scripts/create_map_offline.py
   scripts/create_map_utils.py
+  scripts/compare_poses.py
   scripts/rectify_images_offline.py
   scripts/pose_plane_fit.py
+  scripts/pose_loader.py
   scripts/stereo_inference_base.py
+  scripts/split_repeated_poses.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -142,4 +145,4 @@ ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path
 include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
 generate_version_info(${PROJECT_NAME})
 
-ament_auto_package()
+ament_auto_package(INSTALL_TO_SHARE configs launch foxglove_layouts)

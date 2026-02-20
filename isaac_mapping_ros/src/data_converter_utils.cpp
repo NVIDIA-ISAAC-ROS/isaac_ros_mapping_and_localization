@@ -99,11 +99,22 @@ std::vector<TopicInfo> ParseAllTopics(
     topic_info.full_topic_ = topic_name;
     topic_info.message_type_ = message_type;
 
-    if (tokens.size() >= 1) {
-      topic_info.camera_name_ = tokens[0];
-    }
-    if (tokens.size() >= 2) {
-      topic_info.sub_camera_name_ = tokens[1];
+    // Handle different topic structures:
+    // 1. /xxxxx/camera_*/image/camera_info or /xxxxx/camera_*/right_image/camera_info
+    // 2. /camera_*/image or /camera_*/camera_info
+    if (tokens.size() >= 4 && tokens[1].find("camera_") == 0)
+    {
+      // New format: /xxxxx/camera_base_front/image/camera_info
+      topic_info.camera_name_ = tokens[1];  // e.g., "camera_base_front"
+      topic_info.sub_camera_name_ = tokens[2];  // e.g., "image" or "right_image"
+    } else {
+      // Legacy format: /camera_*/image or /camera_*/camera_info
+      if (tokens.size() >= 1) {
+        topic_info.camera_name_ = tokens[0];
+      }
+      if (tokens.size() >= 2) {
+        topic_info.sub_camera_name_ = tokens[1];
+      }
     }
 
     // Analyze sensor type if we have at least the sub_camera_name_
@@ -1374,6 +1385,55 @@ struct CameraProcessingData
   uint64_t last_image_timestamp_ns{0};
 };
 
+// Helper function to decode compressed image data
+bool DecodeCompressedImage(
+  const sensor_msgs::msg::CompressedImage& image,
+  CameraProcessingData& processing_data,
+  const std::string& camera_name,
+  cv::Mat& decoded_image)
+{
+  // Check if the format is H.264 - only use decoder for H.264
+  std::string format_lower = image.format;
+  std::transform(format_lower.begin(), format_lower.end(), format_lower.begin(), ::tolower);
+  bool is_h264_format = (format_lower.find("h264") != std::string::npos);
+
+  if (is_h264_format) {
+    // Use VideoDecoder for H.264 format
+    if (!processing_data.decoder) {
+      LOG(ERROR) << "Decoder is not initialized for H.264 format, please pass --codec_name";
+      return false;
+    }
+
+    nvidia::isaac::common::datetime::ScopedTimer timer("DecodeH264");
+    std::vector<cv::Mat> frames;
+    if (!processing_data.decoder->DecodePacket(image.data, frames) || frames.empty()) {
+      LOG(WARNING) << "Failed to decode H.264 frames for camera: " << camera_name;
+      return false;
+    }
+
+    if (frames.size() > 1) {
+      LOG(ERROR) << "total frames decoded from one message is larger than 1 for camera: " << camera_name;
+      return false;
+    }
+
+    decoded_image = frames[0];
+    LOG_EVERY_N(INFO, 100) << "Decoded H.264 image for camera: " << camera_name;
+  } else {
+    // Use OpenCV to decode all other formats (JPEG, PNG, etc.)
+    nvidia::isaac::common::datetime::ScopedTimer timer("DecodeWithOpenCV");
+    decoded_image = cv::imdecode(image.data, cv::IMREAD_COLOR);
+    if (decoded_image.empty()) {
+      LOG(WARNING) << "Failed to decode image for camera: " << camera_name
+                   << " (format: " << image.format << ")";
+      return false;
+    }
+
+    LOG_EVERY_N(INFO, 100) << "Decoded " << image.format << " image for camera: " << camera_name;
+  }
+
+  return true;
+}
+
 void DecodingThread(
   CameraProcessingData & processing_data,
   const std::string & camera_name,
@@ -1418,50 +1478,8 @@ void DecodingThread(
       }
 
       if (!dry_run) {
-        // Check if the image format contains JPEG/JPG - support both common variants
-        // JPEG images can be decoded directly with OpenCV, avoiding the need for codec_name
-        std::string format_lower = image.format;
-        std::transform(format_lower.begin(), format_lower.end(), format_lower.begin(), ::tolower);
-        bool is_jpeg_format = (format_lower.find("jpeg") != std::string::npos ||
-          format_lower.find("jpg") != std::string::npos);
-
-        if (is_jpeg_format) {
-          // Use OpenCV to decode JPEG images directly
-          nvidia::isaac::common::datetime::ScopedTimer timer("DecodeJPEG");
-          cv::Mat jpeg_image = cv::imdecode(image.data, cv::IMREAD_COLOR);
-          if (jpeg_image.empty()) {
-            LOG(WARNING) << "Failed to decode JPEG image for camera: " << camera_name
-                         << " (format: " << image.format << ")";
-            continue;
-          }
-
-          image_frame.image = jpeg_image;
-          LOG_EVERY_N(INFO, 100) << "Decoded JPEG image for camera: " << camera_name
-                                 << " (format: " << image.format << ")";
-        } else {
-          // Use VideoDecoder for other formats (e.g., H.264)
-          if (!processing_data.decoder) {
-            LOG(ERROR) << "Decoder is not initialized for format '" << image.format
-                       << "', please pass --codec_name for non-JPEG formats";
-            continue;
-          }
-
-          nvidia::isaac::common::datetime::ScopedTimer timer("DecodePacket");
-          std::vector<cv::Mat> frames;
-          if (!processing_data.decoder->DecodePacket(image.data, frames) || frames.empty()) {
-            LOG(WARNING) << "Failed to decode frames for format '" << image.format
-                         << "', No frames decoded";
-            continue;
-          }
-
-          if (frames.size() > 1) {
-            LOG(ERROR) << "total frames decoded from one message is larger than 1";
-            continue;
-          }
-
-          image_frame.image = frames[0];
-          LOG_EVERY_N(INFO, 100) << "Decoded " << image.format << " image for camera: "
-                                 << camera_name;
+        if (!DecodeCompressedImage(image, processing_data, camera_name, image_frame.image)) {
+          continue;
         }
       }
 

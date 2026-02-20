@@ -46,10 +46,17 @@ EXIT_PROCESSING_FAILED = 3
 class RepeatedPoseSplitter:
     """Clean class to split repeated pose files using timestamp mapping."""
 
-    def __init__(self, poses_dir: pathlib.Path, edx_dir: pathlib.Path, repeat_count: int):
+    def __init__(
+            self,
+            poses_dir: pathlib.Path,
+            edx_dir: pathlib.Path,
+            repeat_count: int,
+            output_dir: pathlib.Path,
+    ):
         self.poses_dir = poses_dir
         self.edx_dir = edx_dir
         self.repeat_count = repeat_count
+        self.output_dir = output_dir
 
         # Setup logging
         logging.basicConfig(
@@ -215,7 +222,7 @@ class RepeatedPoseSplitter:
                 last_poses = poses[last_run_start:last_run_end]
                 last_timestamps = first_run_timestamps[:len(last_poses)]
 
-                main_file = self.poses_dir / f"{base_name}.tum"
+                main_file = self.output_dir / f"{base_name}.tum"
                 self._save_tum_file(main_file, last_timestamps, last_poses)
                 self.logger.info(f"  Copied last run to {base_name}.tum ({len(last_poses)} poses)")
 
@@ -303,7 +310,7 @@ class RepeatedPoseSplitter:
                 latest_timestamps = latest_timestamps[sorted_indices]
                 latest_poses = latest_poses[sorted_indices]
 
-                main_file = self.poses_dir / "keyframe_pose.tum"
+                main_file = self.output_dir / "keyframe_pose.tum"
                 self._save_tum_file(main_file, latest_timestamps, latest_poses)
                 self.logger.info(
                     f"Saved keyframe_pose.tum:run {latest_run_idx} :: ({len(latest_poses)})")
@@ -352,6 +359,8 @@ def main():
                         help='Directory containing stereo.edex file')
     parser.add_argument('--repeat_count', type=int, required=True,
                         help='Number of repeat runs')
+    parser.add_argument('--output_dir', type=pathlib.Path, required=True,
+                        help='Directory to save the split pose files')
 
     args = parser.parse_args()
 
@@ -365,7 +374,12 @@ def main():
         sys.exit(EXIT_FILE_NOT_FOUND)
 
     # Process files
-    splitter = RepeatedPoseSplitter(args.poses_dir, args.edx_dir, args.repeat_count)
+    splitter = RepeatedPoseSplitter(
+        args.poses_dir,
+        args.edx_dir,
+        args.repeat_count,
+        args.output_dir,
+    )
     success = splitter.process_all_files()
 
     sys.exit(EXIT_SUCCESS if success else EXIT_PROCESSING_FAILED)

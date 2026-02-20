@@ -44,6 +44,7 @@ find_package(CUDAToolkit REQUIRED)
 # Dependencies
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(gflags REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # NVTX
 option(USE_NVTX "Enable NVTX markers for improved profiling (if available)" ON)
