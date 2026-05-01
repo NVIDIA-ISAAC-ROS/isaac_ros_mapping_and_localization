@@ -61,6 +61,8 @@ def get_default_cuvslam_config() -> Dict[str, Any]:
         'cfg_planar': False,
         'cfg_slam_max_map_size': 300,
         'cfg_sync_slam': True,
+        # Required for GetState() when SLAM is enabled (launcher: cfg_enable_export only)
+        'cfg_enable_export': True,
         # repeat
         'repeat': 1,
         # export

@@ -452,6 +452,8 @@ def run_cuvslam_api_launcher(edex_path: pathlib.Path,
         cuvslam_config['cfg_horizontal'] = False
     else:
         cuvslam_config['cfg_horizontal'] = True
+    if cuvslam_config.get('cfg_enable_slam', False):
+        cuvslam_config.setdefault('cfg_enable_export', True)
     command = build_cuvslam_command_api_launcher(base_command, cuvslam_config, log_folder,
                                                  output_poses_dir)
     subprocess_utils.run_command(
