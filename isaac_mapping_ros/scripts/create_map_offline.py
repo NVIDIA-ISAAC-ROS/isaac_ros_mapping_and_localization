@@ -18,27 +18,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+from datetime import datetime, timedelta
 import math
 import os
 import pathlib
 import shutil
 import subprocess
-from datetime import datetime, timedelta
 
 import ament_index_python.packages as packages
-
-import rosbag2_py
-
-from isaac_common_py import subprocess_utils
-from isaac_common_py import filesystem_utils
-from isaac_common_py import arg_utils
 from create_map_utils import (
-    load_map_creation_config,
-    parse_config_overrides,
     build_cuvslam_command_api_launcher,
     build_nvblox_command,
+    load_map_creation_config,
+    parse_config_overrides,
 )
+from isaac_common_py import arg_utils
+from isaac_common_py import filesystem_utils
+from isaac_common_py import subprocess_utils
 from pose_loader import load_optimized_keyframe_min_max_z
+import rosbag2_py
 
 ROS_WS = pathlib.Path(os.environ.get('ISAAC_ROS_WS'))
 VISUAL_MAPPING_PACKAGE_NAME = 'isaac_ros_visual_mapping'
@@ -754,7 +752,7 @@ def check_running_depth_inference(depth_model: str = 'ess'):
     active_nodes = result.stdout.splitlines()
 
     if depth_model == 'foundationstereo':
-        stereo_processes = ['/foundationstereo_container', '/foundationstereo_decoder']
+        stereo_processes = ['/foundationstereo_container', '/dnn_stereo_decoder']
         model_name = 'Foundation Stereo'
     else:
         stereo_processes = ['/disparity', '/disparity/disparity_container']

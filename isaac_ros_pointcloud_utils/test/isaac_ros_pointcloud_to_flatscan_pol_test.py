@@ -38,11 +38,19 @@ def generate_test_description():
     and checks if a "flatscan" received at the output
     of the flatenner is of the expected size.
     """
+    # Pin the parameters that drive the 8892-range baseline. Defaults track the
+    # legacy GXF codelet (wide z slice, large max_points) so the test must
+    # specify its own narrow z slice to keep the baseline stable.
     pointcloud_to_flatscan_node = ComposableNode(
         package='isaac_ros_pointcloud_utils',
         plugin='nvidia::isaac_ros::pointcloud_utils::PointCloudToFlatScanNode',
         name='pointcloud_to_flatscan',
-        namespace=IsaacROSPointCloudToFlatScanPOLTest.generate_namespace()
+        namespace=IsaacROSPointCloudToFlatScanPOLTest.generate_namespace(),
+        parameters=[{
+            'min_z': -0.1,
+            'max_z': 0.1,
+            'max_points': 150000,
+        }],
     )
 
     rosbag_play = ExecuteProcess(

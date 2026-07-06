@@ -1,5 +1,5 @@
 # SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-# Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.5)
-project(isaac_ros_pointcloud_utils LANGUAGES C CXX)
+cmake_minimum_required(VERSION 3.22.1)
+project(isaac_ros_pointcloud_utils LANGUAGES C CXX CUDA)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -25,13 +25,18 @@ endif()
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
-# Eigen
-find_package(Eigen3 REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
-include_directories(${EIGEN3_INCLUDE_DIR})
 
-# pointcloud_to_flatscan
-ament_auto_add_library(pointcloud_to_flatscan SHARED src/pointcloud_to_flatscan_node.cpp)
+# pointcloud_to_flatscan (GXF-free, CUDA kernel)
+set_source_files_properties(
+  src/pointcloud_to_flatscan_cuda.cu.cpp
+  PROPERTIES LANGUAGE CUDA
+)
+ament_auto_add_library(pointcloud_to_flatscan SHARED
+  src/pointcloud_to_flatscan_node.cpp
+  src/pointcloud_to_flatscan_cuda.cu.cpp)
+target_link_libraries(pointcloud_to_flatscan CUDA::cudart Threads::Threads)
 rclcpp_components_register_nodes(pointcloud_to_flatscan "nvidia::isaac_ros::pointcloud_utils::PointCloudToFlatScanNode")
 set(node_plugins "${node_plugins}nvidia::isaac_ros::pointcloud_utils::PointCloudToFlatScanNode;$<TARGET_FILE:pointcloud_to_flatscan>\n")
 set_target_properties(pointcloud_to_flatscan PROPERTIES
@@ -82,4 +87,4 @@ ament_index_get_resource(ISAAC_ROS_COMMON_CMAKE_PATH isaac_ros_common_cmake_path
 include("${ISAAC_ROS_COMMON_CMAKE_PATH}/isaac_ros_common-version-info.cmake")
 generate_version_info(${PROJECT_NAME})
 
-ament_auto_package(INSTALL_TO_SHARE config launch)
+ament_auto_package(INSTALL_TO_SHARE launch)

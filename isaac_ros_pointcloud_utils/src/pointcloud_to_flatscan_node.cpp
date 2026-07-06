@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: NVIDIA CORPORATION & AFFILIATES
-// Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,33 +15,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#include <cstdio>
+#include "isaac_ros_pointcloud_utils/pointcloud_to_flatscan_node.hpp"
+
+#include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
-#include "isaac_ros_common/qos.hpp"
-
-#include "isaac_ros_pointcloud_utils/pointcloud_to_flatscan_node.hpp"
-#include "isaac_ros_nitros_flat_scan_type/nitros_flat_scan.hpp"
-#include "isaac_ros_nitros_point_cloud_type/nitros_point_cloud.hpp"
-
-#include "rclcpp/rclcpp.hpp"
+#include "rcl_interfaces/msg/parameter_descriptor.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-#pragma GCC diagnostic ignored "-Wpedantic"
-#include "gxf/std/timestamp.hpp"
-#pragma GCC diagnostic pop
-
-namespace
-{
-// number of components in PointCloud gxf msg
-constexpr int kPointCloudGxfMsgSize = 4;
-constexpr int kMsgBufferSize = 5;
-}
+#include "isaac_ros_common/qos.hpp"
+#include "isaac_ros_pointcloud_utils/pointcloud_to_flatscan_cuda.cu.hpp"
 
 namespace nvidia
 {
@@ -49,133 +35,232 @@ namespace isaac_ros
 {
 namespace pointcloud_utils
 {
+namespace
+{
+constexpr size_t kOutputPoolBlocks = 5;
 
-using nvidia::gxf::optimizer::GraphIOGroupSupportedDataTypesInfoList;
-
-constexpr char INPUT_COMPONENT_KEY_POINTCLOUD[] = "pointcloud_to_flatscan/rx_point_cloud";
-constexpr char INPUT_DEFAULT_TENSOR_FORMAT_POINTCLOUD[] = "nitros_point_cloud";
-constexpr char INPUT_TOPIC_NAME_POINTCLOUD[] = "pointcloud";
-
-constexpr char OUTPUT_COMPONENT_KEY_FLATSCAN[] = "sink/sink";
-constexpr char OUTPUT_DEFAULT_TENSOR_FORMAT_FLATSCAN[] = "nitros_flat_scan";
-constexpr char OUTPUT_TOPIC_NAME_FLATSCAN[] = "flatscan";
-
-constexpr char APP_YAML_FILENAME[] = "config/pointcloud_to_flatscan_node.yaml";
-constexpr char PACKAGE_NAME[] = "isaac_ros_pointcloud_utils";
-
-const std::vector<std::pair<std::string, std::string>> EXTENSIONS = {
-  {"gxf_isaac_point_cloud", "gxf/lib/libgxf_isaac_point_cloud.so"}
-};
-const std::vector<std::string> PRESET_EXTENSION_SPEC_NAMES = {
-  "isaac_ros_pointcloud_utils"
-};
-const std::vector<std::string> EXTENSION_SPEC_FILENAMES = {};
-const std::vector<std::string> GENERATOR_RULE_FILENAMES = {};
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpedantic"
-
-const nitros::NitrosPublisherSubscriberConfigMap CONFIG_MAP = {
-  {INPUT_COMPONENT_KEY_POINTCLOUD,
-    {
-      .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
-      .compatible_data_format = INPUT_DEFAULT_TENSOR_FORMAT_POINTCLOUD,
-      .topic_name = INPUT_TOPIC_NAME_POINTCLOUD,
-    }
-  },
-  {OUTPUT_COMPONENT_KEY_FLATSCAN,
-    {
-      .type = nitros::NitrosPublisherSubscriberType::NEGOTIATED,
-      .qos = rclcpp::QoS(10),
-      .compatible_data_format = OUTPUT_DEFAULT_TENSOR_FORMAT_FLATSCAN,
-      .topic_name = OUTPUT_TOPIC_NAME_FLATSCAN,
-      .frame_id_source_key = INPUT_COMPONENT_KEY_POINTCLOUD,
-    }
-  }
-};
-#pragma GCC diagnostic pop
+// Defaults and descriptions match the legacy GXF PointCloudToFlatscan codelet
+// (isaac_ros_gxf_extensions/pointcloud) so this node is a drop-in replacement
+// for callers that were previously configured against that graph.
+rcl_interfaces::msg::ParameterDescriptor MakeDescriptor(const std::string & description)
+{
+  rcl_interfaces::msg::ParameterDescriptor d;
+  d.description = description;
+  return d;
+}
+}  // namespace
 
 PointCloudToFlatScanNode::PointCloudToFlatScanNode(const rclcpp::NodeOptions & options)
-: nitros::NitrosNode(options,
-    APP_YAML_FILENAME,
-    CONFIG_MAP,
-    PRESET_EXTENSION_SPEC_NAMES,
-    EXTENSION_SPEC_FILENAMES,
-    GENERATOR_RULE_FILENAMES,
-    EXTENSIONS,
-    PACKAGE_NAME),
-  min_x_(declare_parameter<double>("min_x", -1.0)),
-  max_x_(declare_parameter<double>("max_x", 1.0)),
-  min_y_(declare_parameter<double>("min_y", -1.0)),
-  max_y_(declare_parameter<double>("max_y", 1.0)),
-  min_z_(declare_parameter<double>("min_z", -0.1)),
-  max_z_(declare_parameter<double>("max_z", 0.1)),
-  max_points_(declare_parameter<double>("max_points", 150000)),
-  threshold_x_axis_(declare_parameter<bool>("threshold_x_axis", false)),
-  threshold_y_axis_(declare_parameter<bool>("threshold_y_axis", false))
+: rclcpp::Node("pointcloud_to_flatscan", options),
+  min_x_(declare_parameter<double>(
+      "min_x", -1.0,
+      MakeDescriptor(
+        "Minimum value allowed for x axis of 3D points with respect to flatscan frame"))),
+  max_x_(declare_parameter<double>(
+      "max_x", 1.0,
+      MakeDescriptor(
+        "Maximum value allowed for x axis of 3D points with respect to flatscan frame"))),
+  min_y_(declare_parameter<double>(
+      "min_y", -1.0,
+      MakeDescriptor(
+        "Minimum value allowed for y axis of 3D points with respect to flatscan frame"))),
+  max_y_(declare_parameter<double>(
+      "max_y", 1.0,
+      MakeDescriptor(
+        "Maximum value allowed for y axis of 3D points with respect to flatscan frame"))),
+  min_z_(declare_parameter<double>(
+      "min_z", -1.0,
+      MakeDescriptor(
+        "Minimum value allowed for z axis of 3D points with respect to flatscan frame"))),
+  max_z_(declare_parameter<double>(
+      "max_z", 1.0,
+      MakeDescriptor(
+        "Maximum value allowed for z axis of 3D points with respect to flatscan frame"))),
+  max_points_(declare_parameter<int>(
+      "max_points", 691200,
+      MakeDescriptor(
+        "Maximum expected number of beams; used to pre-allocate GPU memory"))),
+  threshold_x_axis_(declare_parameter<bool>(
+      "threshold_x_axis", false,
+      MakeDescriptor("Enable X axis points thresholding"))),
+  threshold_y_axis_(declare_parameter<bool>(
+      "threshold_y_axis", false,
+      MakeDescriptor("Enable Y axis points thresholding")))
 {
-  RCLCPP_DEBUG(get_logger(), "[PointCloudToFlatScanNode] Constructor");
+  if (max_points_ <= 0) {
+    throw std::runtime_error("PointCloudToFlatScanNode: max_points must be positive");
+  }
 
-  // This function sets the QoS parameter for publishers and subscribers setup by this NITROS node
-  rclcpp::QoS input_qos_ = ::isaac_ros::common::AddQosParameter(
+  const rclcpp::QoS input_qos = ::isaac_ros::common::AddQosParameter(
     *this, "DEFAULT", "input_qos");
-  rclcpp::QoS output_qos_ = ::isaac_ros::common::AddQosParameter(
+  const rclcpp::QoS output_qos = ::isaac_ros::common::AddQosParameter(
     *this, "DEFAULT", "output_qos");
-  for (auto & config : config_map_) {
-    if (config.second.topic_name == INPUT_TOPIC_NAME_POINTCLOUD) {
-      config.second.qos = input_qos_;
-    } else {
-      config.second.qos = output_qos_;
+
+  // If any step below throws, the destructor will not run (object not fully
+  // constructed), so manually release whatever was already allocated and rethrow.
+  try {
+    cudaError_t err = cudaStreamCreate(&cuda_stream_);
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+              std::string("cudaStreamCreate failed: ") + cudaGetErrorString(err));
+    }
+
+    err = cudaMalloc(&counter_device_, sizeof(uint32_t));
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+              std::string("cudaMalloc(counter) failed: ") + cudaGetErrorString(err));
+    }
+
+    const size_t buffer_bytes =
+      2u * static_cast<size_t>(max_points_) * sizeof(float);
+    err = cudaMalloc(&scratch_device_, buffer_bytes);
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+              std::string("cudaMalloc(scratch) failed: ") + cudaGetErrorString(err));
+    }
+
+    err = output_pool_.create(
+      buffer_bytes, kOutputPoolBlocks,
+      nvidia::isaac_ros::nitros::CUDAMemoryPool::MemoryType::Device);
+    if (err != cudaSuccess) {
+      throw std::runtime_error(
+              std::string("output_pool_.create failed: ") + cudaGetErrorString(err));
+    }
+
+    rclcpp::PublisherOptions pub_options;
+    pub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+    flatscan_pub_ = create_publisher<nvidia::isaac_ros::nitros::NitrosFlatScan>(
+      "flatscan", output_qos, pub_options);
+
+    rclcpp::SubscriptionOptions sub_options;
+    sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+    pc_sub_ = create_subscription<nvidia::isaac_ros::nitros::NitrosPointCloud>(
+      "pointcloud", input_qos,
+      std::bind(&PointCloudToFlatScanNode::PointCloudCallback, this, std::placeholders::_1),
+      sub_options);
+  } catch (...) {
+    output_pool_.destroy();
+    if (scratch_device_ != nullptr) {
+      cudaFree(scratch_device_);
+      scratch_device_ = nullptr;
+    }
+    if (counter_device_ != nullptr) {
+      cudaFree(counter_device_);
+      counter_device_ = nullptr;
+    }
+    if (cuda_stream_ != nullptr) {
+      cudaStreamDestroy(cuda_stream_);
+      cuda_stream_ = nullptr;
+    }
+    throw;
+  }
+}
+
+PointCloudToFlatScanNode::~PointCloudToFlatScanNode()
+{
+  output_pool_.destroy();
+  if (scratch_device_ != nullptr) {cudaFree(scratch_device_);}
+  if (counter_device_ != nullptr) {cudaFree(counter_device_);}
+  if (cuda_stream_ != nullptr) {cudaStreamDestroy(cuda_stream_);}
+}
+
+void PointCloudToFlatScanNode::PointCloudCallback(
+  const nvidia::isaac_ros::nitros::NitrosPointCloud::ConstSharedPtr & point_cloud)
+{
+  std::lock_guard<std::mutex> lock(tick_mutex_);
+
+  const uint32_t num_points = point_cloud->width * point_cloud->height;
+  if (num_points == 0) {
+    RCLCPP_DEBUG(get_logger(), "Empty point cloud received, skipping");
+    return;
+  }
+
+  const uint32_t max_output = static_cast<uint32_t>(max_points_);
+  const uint32_t point_step_floats = point_cloud->point_step / sizeof(float);
+  // Kernel reads x/y/z at offsets 0,1,2 within each point; smaller strides would OOB.
+  if (point_step_floats < 3) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Point cloud point_step (%u bytes) is too small for XYZ; skipping message",
+      point_cloud->point_step);
+    return;
+  }
+
+  auto read_handle = point_cloud->get_read_handle(cuda_stream_);
+  const float * input_points = reinterpret_cast<const float *>(read_handle.get_ptr());
+
+  float * scratch_angles = reinterpret_cast<float *>(scratch_device_);
+  float * scratch_ranges = scratch_angles + static_cast<size_t>(max_points_);
+
+  cudaError_t err = cudaMemsetAsync(counter_device_, 0, sizeof(uint32_t), cuda_stream_);
+  if (err != cudaSuccess) {
+    RCLCPP_ERROR(get_logger(), "cudaMemsetAsync(counter) failed: %s", cudaGetErrorString(err));
+    return;
+  }
+
+  const ThresholdParams params{
+    threshold_x_axis_,
+    threshold_y_axis_,
+    static_cast<float>(min_x_),
+    static_cast<float>(max_x_),
+    static_cast<float>(min_y_),
+    static_cast<float>(max_y_),
+    static_cast<float>(min_z_),
+    static_cast<float>(max_z_),
+  };
+  LaunchPointCloudToFlatscan(
+    input_points, num_points, point_step_floats,
+    scratch_angles, scratch_ranges, max_output, counter_device_, params, cuda_stream_);
+
+  uint32_t count = 0;
+  err = cudaMemcpyAsync(
+    &count, counter_device_, sizeof(uint32_t), cudaMemcpyDeviceToHost, cuda_stream_);
+  if (err != cudaSuccess) {
+    RCLCPP_ERROR(get_logger(), "cudaMemcpyAsync(count) failed: %s", cudaGetErrorString(err));
+    return;
+  }
+  err = cudaStreamSynchronize(cuda_stream_);
+  if (err != cudaSuccess) {
+    RCLCPP_ERROR(get_logger(), "cudaStreamSynchronize failed: %s", cudaGetErrorString(err));
+    return;
+  }
+  if (count > max_output) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "Thresholded point count (%u) exceeded max_points (%u); trailing points were dropped",
+      count, max_output);
+    count = max_output;
+  }
+
+  auto flatscan = std::make_unique<nvidia::isaac_ros::nitros::NitrosFlatScan>();
+  flatscan->frame_id = point_cloud->frame_id;
+  flatscan->timestamp_sec = point_cloud->timestamp_sec;
+  flatscan->timestamp_nsec = point_cloud->timestamp_nsec;
+  flatscan->range_min = 0.0f;
+  flatscan->range_max = 0.0f;
+
+  if (count > 0) {
+    auto write_handle = flatscan->from_pool(
+      output_pool_, count, /*range_max=*/ 0.0f, /*range_min=*/ 0.0f, cuda_stream_);
+    uint8_t * dest = write_handle.get_ptr();
+    const size_t plane_bytes = static_cast<size_t>(count) * sizeof(float);
+
+    err = cudaMemcpyAsync(
+      dest, scratch_angles, plane_bytes, cudaMemcpyDeviceToDevice, cuda_stream_);
+    if (err != cudaSuccess) {
+      RCLCPP_ERROR(get_logger(), "cudaMemcpyAsync(angles) failed: %s", cudaGetErrorString(err));
+      return;
+    }
+    err = cudaMemcpyAsync(
+      dest + plane_bytes, scratch_ranges, plane_bytes, cudaMemcpyDeviceToDevice, cuda_stream_);
+    if (err != cudaSuccess) {
+      RCLCPP_ERROR(get_logger(), "cudaMemcpyAsync(ranges) failed: %s", cudaGetErrorString(err));
+      return;
     }
   }
 
-  registerSupportedType<nvidia::isaac_ros::nitros::NitrosFlatScan>();
-  registerSupportedType<nvidia::isaac_ros::nitros::NitrosPointCloud>();
-
-  startNitrosNode();
+  flatscan_pub_->publish(std::move(flatscan));
 }
-
-void PointCloudToFlatScanNode::postLoadGraphCallback()
-{
-  RCLCPP_DEBUG(get_logger(), "[PointCloudToFlatScanNode] postLoadGraphCallback().");
-  getNitrosContext().setParameterFloat64(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "min_x",
-    min_x_);
-  getNitrosContext().setParameterFloat64(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "max_x",
-    max_x_);
-  getNitrosContext().setParameterFloat64(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "min_y",
-    min_y_);
-  getNitrosContext().setParameterFloat64(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "max_y",
-    max_y_);
-  getNitrosContext().setParameterFloat64(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "min_z",
-    min_z_);
-  getNitrosContext().setParameterFloat64(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "max_z",
-    max_z_);
-  getNitrosContext().setParameterInt32(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan", "max_points",
-    max_points_);
-  getNitrosContext().setParameterBool(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan",
-    "threshold_x_axis",
-    threshold_x_axis_);
-  getNitrosContext().setParameterBool(
-    "pointcloud_to_flatscan", "nvidia::isaac_ros::point_cloud::PointCloudToFlatscan",
-    "threshold_y_axis",
-    threshold_y_axis_);
-  // decide how much memory to allocate based on how much memory used in
-  // PointCloudToFlatscan source code
-  getNitrosContext().setParameterUInt64(
-    "pointcloud_to_flatscan", "nvidia::gxf::BlockMemoryPool",
-    "block_size",
-    kPointCloudGxfMsgSize * kMsgBufferSize * sizeof(float) * max_points_ + sizeof(uint));
-}
-
-PointCloudToFlatScanNode::~PointCloudToFlatScanNode() {}
 
 }  // namespace pointcloud_utils
 }  // namespace isaac_ros

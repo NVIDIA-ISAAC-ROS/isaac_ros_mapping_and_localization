@@ -148,11 +148,19 @@ class IsaacROSOccupancyGridLocalizerPOLTest(IsaacROSBaseTest):
                                    0.824589, None,
                                    'received quaternion W is not within tolerance',
                                    TEST_QUAT_TOLERANCE)
+            # Diagonal elements (0, 7, 35) carry confidence-derived variance;
+            # off-diagonal elements should be zero.
+            confidence_diag = {0, 7, 35}
             for i in range(36):
-                self.assertAlmostEqual(loc_result_actual.pose.covariance[i],
-                                       0.0, None,
-                                       'received covariance is not within tolerance',
-                                       TEST_COV_TOLERANCE)
+                if i in confidence_diag:
+                    self.assertGreaterEqual(
+                        loc_result_actual.pose.covariance[i], 0.0,
+                        'covariance diagonal must be non-negative')
+                else:
+                    self.assertAlmostEqual(
+                        loc_result_actual.pose.covariance[i], 0.0, None,
+                        'off-diagonal covariance is not within tolerance',
+                        TEST_COV_TOLERANCE)
 
             self.node._logger.info('Received message was verified successfully.')
 
