@@ -31,8 +31,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 
 #include "isaac_common/messaging/message_stream_synchronizer.hpp"
-#include "isaac_ros_managed_nitros/managed_nitros_subscriber.hpp"
-#include "isaac_ros_nitros_image_type/nitros_image_view.hpp"
+#include "isaac_ros_nitros_image_type/nitros_image.hpp"
 #include "isaac_ros_visual_global_localization/transform_manager.hpp"
 
 #include "common/image/image_rectifier.h"
@@ -48,7 +47,7 @@ namespace isaac_ros
 namespace visual_global_localization
 {
 
-using ImageType = nvidia::isaac_ros::nitros::NitrosImageView;
+using ImageType = nvidia::isaac_ros::nitros::NitrosImage;
 using CameraInfoType = sensor_msgs::msg::CameraInfo;
 using SrvTriggerGlobalLocalization = std_srvs::srv::Trigger;
 using MsgTriggerGlobalLocalization = geometry_msgs::msg::PoseWithCovarianceStamped;
@@ -81,7 +80,8 @@ public:
     std::shared_ptr<ImageType>> & images) const;
 
   // Callback function for nitros images
-  void inputImageCallback(const ImageType & image_msg, camera_params_id_t camera_id);
+  void inputImageCallback(
+    const ImageType::ConstSharedPtr & image_msg, camera_params_id_t camera_id);
   // Callback function for camera info
   void inputCameraInfoCallback(
     const CameraInfoType::ConstSharedPtr & camera_info_msg,
@@ -140,8 +140,7 @@ protected:
 
   // ROS publishers and subscribers
   // nitros image subscribers
-  std::vector<std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosSubscriber<ImageType>>>
-  image_subs_;
+  std::vector<rclcpp::Subscription<ImageType>::SharedPtr> image_subs_;
   // camera info subscriber
   std::vector<rclcpp::Subscription<CameraInfoType>::SharedPtr> camera_info_subs_;
   // Trigger global localization by topic

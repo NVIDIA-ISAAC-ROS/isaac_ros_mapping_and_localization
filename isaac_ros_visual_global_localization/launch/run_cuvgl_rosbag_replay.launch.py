@@ -15,10 +15,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import isaac_ros_launch_utils.all_types as lut
-import isaac_ros_launch_utils as lu
-from ament_index_python.packages import get_package_share_directory
 import os
+
+from ament_index_python.packages import get_package_share_directory
+import isaac_ros_launch_utils as lu
+import isaac_ros_launch_utils.all_types as lut
 from launch.event_handlers import OnProcessExit
 
 # Remap image and camera info topics, we can modify this function to remap other topics if needed.
@@ -222,7 +223,7 @@ def create_visualization_actions(args):
 def add_visual_global_localization(args: lu.ArgumentContainer) -> list[lut.Action]:
     actions = []
 
-    # Use standard ROS2 bag play instead of isaac_ros_data_replayer
+    # Use standard ROS2 bag playback for the localization sample.
     bag_play_cmd = [
         'ros2', 'bag', 'play',
         args.rosbag_path,

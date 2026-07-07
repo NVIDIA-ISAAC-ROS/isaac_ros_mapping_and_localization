@@ -32,7 +32,6 @@
 #include "common/image/image_calibration_params.h"
 #include "isaac_ros_visual_global_localization/constants.h"
 #include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
-#include "isaac_ros_nitros/types/nitros_type_message_filter_traits.hpp"
 
 namespace nvidia
 {
@@ -45,13 +44,10 @@ namespace visual_global_localization
     RCLCPP_INFO_STREAM(get_logger(), MESSAGE); \
   }
 
-using NitrosTimeStamp =
-  message_filters::message_traits::TimeStamp<ImageType::BaseType>;
-
 uint64_t GetImageTimestampInMicros(const ImageType & image)
 {
-  return image.GetTimestampSeconds() * kSecondsToMicroseconds +
-         image.GetTimestampNanoseconds() / kMicrosecondsToNanoseconds;
+  return image.timestamp_sec * kSecondsToMicroseconds +
+         image.timestamp_nsec / kMicrosecondsToNanoseconds;
 }
 
 sensor_msgs::msg::CameraInfo GetRectifiedCameraInfo(
@@ -309,13 +305,11 @@ void VisualGlobalLocalizationNode::subscribeToTopics()
     "input_qos");
   for (int i = 0; i < num_cameras_; ++i) {
     image_subs_.emplace_back(
-      std::make_shared<nvidia::isaac_ros::nitros::ManagedNitrosSubscriber<ImageType>>(
-        this,
-        input_image_topic_name_ + "_" + std::to_string(i),
-        nvidia::isaac_ros::nitros::nitros_image_rgb8_t::supported_type_name,
-        std::bind(
-          &VisualGlobalLocalizationNode::inputImageCallback, this, std::placeholders::_1, i),
-        nvidia::isaac_ros::nitros::NitrosDiagnosticsConfig(), input_qos));
+      create_subscription<ImageType>(
+        input_image_topic_name_ + "_" + std::to_string(i), input_qos,
+        [this, i](const ImageType::ConstSharedPtr & msg) {
+          return inputImageCallback(msg, i);
+        }));
     camera_info_subs_.emplace_back(
       create_subscription<CameraInfoType>(
         input_camera_info_topic_name_ + "_" + std::to_string(i), input_qos,
@@ -425,7 +419,7 @@ void VisualGlobalLocalizationNode::callbackSynchronizedImages(
 
   std::unordered_map<std::string, std::shared_ptr<ImageType>> images;
   for (const auto & [idx, image] : idx_and_image_msgs) {
-    images[image.GetFrameId()] = std::make_shared<ImageType>(image);
+    images[image.frame_id] = std::make_shared<ImageType>(image);
   }
 
   rclcpp::Time timestamp;
@@ -478,8 +472,8 @@ bool VisualGlobalLocalizationNode::processImages(
 
   // Use the timestamp of the first image
   timestamp = rclcpp::Time(
-    images.begin()->second->GetTimestampSeconds(),
-    images.begin()->second->GetTimestampNanoseconds(), RCL_ROS_TIME);
+    images.begin()->second->timestamp_sec,
+    images.begin()->second->timestamp_nsec, RCL_ROS_TIME);
 
   // Set the camera images
   std::vector<isaac::visual::cuvgl::CameraImage> camera_images;
@@ -593,7 +587,7 @@ bool VisualGlobalLocalizationNode::processImages(
 }
 
 void VisualGlobalLocalizationNode::inputImageCallback(
-  const ImageType & image_msg,
+  const ImageType::ConstSharedPtr & image_msg,
   camera_params_id_t camera_id)
 {
   if (!trigger_localization_) {
@@ -603,12 +597,13 @@ void VisualGlobalLocalizationNode::inputImageCallback(
     return;
   }
 
-  const rclcpp::Time timestamp = NitrosTimeStamp::value(image_msg.GetMessage());
+  const rclcpp::Time timestamp = rclcpp::Time(
+    image_msg->timestamp_sec, image_msg->timestamp_nsec, RCL_ROS_TIME);
   INFO_STREAM(
     verbose_logging_,
     "[" << std::this_thread::get_id() << "] inputImageCallback " << camera_id << ", sec: "
         << std::fixed << std::setprecision(3) << (double)timestamp.nanoseconds() / 1e9);
-  sync_->AddMessage(camera_id, timestamp.nanoseconds(), image_msg, true /* trigger callback */);
+  sync_->AddMessage(camera_id, timestamp.nanoseconds(), *image_msg, true /* trigger callback */);
 }
 
 nvidia::isaac::common::image::MonoCameraCalibrationParams VisualGlobalLocalizationNode::
@@ -735,17 +730,19 @@ bool VisualGlobalLocalizationNode::convertImageMessage(
 {
   // Convert the NitrosImage to sensor_msgs::msg::Image
   sensor_msgs::msg::Image img_msg;
-  img_msg.header.frame_id = image->GetFrameId();
-  img_msg.header.stamp.sec = image->GetTimestampSeconds();
-  img_msg.header.stamp.nanosec = image->GetTimestampNanoseconds();
-  img_msg.height = image->GetHeight();
-  img_msg.width = image->GetWidth();
-  img_msg.encoding = image->GetEncoding();
-  img_msg.step = image->GetSizeInBytes() / image->GetHeight();
-  img_msg.data.resize(image->GetSizeInBytes());
+  img_msg.header.frame_id = image->frame_id;
+  img_msg.header.stamp.sec = static_cast<int32_t>(image->timestamp_sec);
+  img_msg.header.stamp.nanosec = image->timestamp_nsec;
+  img_msg.height = image->height;
+  img_msg.width = image->width;
+  img_msg.encoding = image->encoding;
+  img_msg.step = image->step;
+  const size_t size_in_bytes = image->get_data_size();
+  img_msg.data.resize(size_in_bytes);
   // Use stream and convert to Async ?
-  if (cudaMemcpyAsync(img_msg.data.data(), image->GetGpuData(),
-                      image->GetSizeInBytes(), cudaMemcpyDefault,
+  auto read_handle = image->get_read_handle(cuda_stream_);
+  if (cudaMemcpyAsync(img_msg.data.data(), read_handle.get_ptr(),
+                      size_in_bytes, cudaMemcpyDefault,
                       cuda_stream_) != cudaSuccess)
   {
     RCLCPP_ERROR(get_logger(), "Failed to copy image data");
@@ -761,18 +758,18 @@ bool VisualGlobalLocalizationNode::convertImageMessage(
   cv_bridge::CvImagePtr bgr_cv_ptr =
     cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
   if (enable_rectify_images_) {
-    if (image_rectifiers_[image->GetFrameId()] == nullptr) {
+    if (image_rectifiers_[image->frame_id] == nullptr) {
       RCLCPP_ERROR(get_logger(), "Image rectifier is not initialized");
       return false;
     }
     // Rectify the image
     cv::Mat rectified_image;
-    image_rectifiers_[image->GetFrameId()]->Rectify(bgr_cv_ptr->image, rectified_image);
+    image_rectifiers_[image->frame_id]->Rectify(bgr_cv_ptr->image, rectified_image);
     bgr_cv_ptr->image = rectified_image;
 
     if (publish_rectified_images_) {
       rectified_image_pubs_[sensor_id]->publish(*(bgr_cv_ptr->toImageMsg()));
-      rectified_camera_info_pubs_[sensor_id]->publish(rectified_camera_infos_[image->GetFrameId()]);
+      rectified_camera_info_pubs_[sensor_id]->publish(rectified_camera_infos_[image->frame_id]);
     }
   }
 
