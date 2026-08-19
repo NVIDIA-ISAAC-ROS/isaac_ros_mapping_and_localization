@@ -18,18 +18,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from argparse import ArgumentParser
-import os
 import ctypes
+import os
 
 import cv2
 import numpy as np
-import tensorrt as trt
 
 from stereo_inference_base import BaseStereoInference, BaseStereoRunner
+import tensorrt as trt
 
 DEFAULT_ENGINE_FILE_PATH = os.getenv('ISAAC_ROS_WS', ".") \
     + '/isaac_ros_assets/models/dnn_stereo_disparity' \
-    + '/dnn_stereo_disparity_v4.1.0_onnx_trt10.13/ess.engine'
+    + '/dnn_stereo_disparity_v4.1.0_onnx_trt10.16/ess.engine'
 
 IMAGE_WIDTH = 1920
 IMAGE_HEIGHT = 1200

@@ -32,6 +32,7 @@ find_package(gflags REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(glog REQUIRED)
 find_package(isaac_ros_visual_mapping REQUIRED)
+find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale)
 
