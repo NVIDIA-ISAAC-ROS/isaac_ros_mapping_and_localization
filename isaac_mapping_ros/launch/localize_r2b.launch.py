@@ -19,65 +19,68 @@ import os
 
 import isaac_ros_launch_utils as lu
 import isaac_ros_launch_utils.all_types as lut
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
+
+
+def create_decoder(camera_name: str, identifier: str) -> lut.Action:
+    decoder_node = lut.ComposableNode(
+        name='decoder_node',
+        package='isaac_ros_h264_decoder',
+        plugin='nvidia::isaac_ros::h264_decoder::DecoderNode',
+        namespace=f'{camera_name}/{identifier}',
+        remappings=[
+            ('image_uncompressed', 'image_raw'),
+        ],
+    )
+    return lu.load_composable_nodes('nova_container', [decoder_node])
 
 
 def add_nodes(args: lu.ArgumentContainer):
     actions = []
+    cuvslam_map_dir = os.path.join(args.map_dir, 'cuvslam_map') if args.map_dir else ''
+    cuvgl_map_dir = os.path.join(args.map_dir, 'cuvgl_map') if args.map_dir else ''
     ground_plane_published = False
 
-    camera_optical_frames = 'camera_infra1_optical_frame,camera_infra2_optical_frame'
-    base_frame = 'camera_link'
     if args.enable_vgl:
         assert args.map_dir, 'map_dir is required when enable_vgl is true'
+
+        vgl_launch_arguments = {
+            'container_name': 'nova_container',
+            'vgl_enabled_stereo_cameras': args.camera_names,
+            'vgl_do_rectify_images': True,
+            'vgl_map_frame': 'map',
+            'vgl_map_dir': cuvgl_map_dir,
+        }
+
         actions.append(
             lu.include(
                 'isaac_ros_visual_global_localization',
                 'launch/include/visual_global_localization.launch.py',
-                launch_arguments={
-                    'container_name': 'nova_container',
-                    'vgl_enabled_stereo_cameras': args.camera_name,
-                    'vgl_do_rectify_images': False,
-                    'vgl_map_frame': 'map',
-                    'publish_rectified_images': False,
-                    'vgl_camera_optical_frames': camera_optical_frames,
-                    'vgl_map_dir': os.path.join(args.map_dir, 'cuvgl_map'),
-                    'vgl_base_frame': base_frame,
-                    'vgl_config_dir': lu.get_path('isaac_ros_visual_mapping',
-                                                  'configs/single_stereo_localizer')
-                },
+                launch_arguments=vgl_launch_arguments,
             ))
 
     if args.enable_vslam:
-        params = {
+        launch_arguments = {
             'container_name': 'nova_container',
-            'vslam_enabled_stereo_cameras': args.camera_name,
+            'vslam_enabled_stereo_cameras': args.camera_names,
             'vslam_map_frame': 'map',
             'vslam_odom_frame': 'odom',
-            'vslam_image_qos': 'SENSOR_DATA',
             'vslam_publish_map_to_odom_tf': True,
-            'vslam_enable_visualization': args.vslam_enable_visualization,
-            'vslam_enable_ground_constraint_in_odometry':
-                args.vslam_enable_ground_constraint_in_odometry,
-            'vslam_enable_ground_constraint_in_slam':
-                args.vslam_enable_ground_constraint_in_slam,
-            'vslam_camera_optical_frames': camera_optical_frames,
-            'vslam_base_frame': base_frame,
-            'vslam_use_rectified_images': True,
+            'vslam_enable_slam': args.vslam_enable_slam,
+            'vslam_use_rectified_images': False,
         }
-
-        if args.map_dir != '':
-            params['vslam_load_map_folder_path'] = os.path.join(args.map_dir, 'cuvslam_map')
-            params['vslam_enable_slam'] = True
+        if args.map_dir:
+            launch_arguments['vslam_load_map_folder_path'] = cuvslam_map_dir
+            launch_arguments['vslam_enable_slam'] = True
 
         actions.append(
             lu.include(
                 'isaac_mapping_ros',
                 'launch/algorithms/vslam.launch.py',
-                launch_arguments=params,
+                launch_arguments=launch_arguments,
             ))
 
-    if args.map_dir != '':
+    if args.map_dir:
         occupancy_map_yaml_file = os.path.join(args.map_dir, 'occupancy_map.yaml')
         assert os.path.exists(occupancy_map_yaml_file), (
             f'occupancy_map_yaml_file {occupancy_map_yaml_file} does not exist')
@@ -121,6 +124,11 @@ def add_nodes(args: lu.ArgumentContainer):
         ))
         actions.append(lu.log_info('No ground plane file found, publishing identity transform'))
 
+    if args.rosbag:
+        for camera_name in args.camera_names.split(','):
+            actions.append(create_decoder(camera_name, 'left'))
+            actions.append(create_decoder(camera_name, 'right'))
+
     actions.append(lu.component_container('nova_container'))
 
     return actions
@@ -129,24 +137,20 @@ def add_nodes(args: lu.ArgumentContainer):
 def generate_launch_description() -> lut.LaunchDescription:
     args = lu.ArgumentContainer()
 
-    args.add_arg('camera_name', 'realsense', cli=True)
-
     args.add_arg('rosbag', '', cli=True)
+    args.add_arg(
+        'camera_names',
+        'front_stereo_camera,left_stereo_camera,right_stereo_camera,back_stereo_camera',
+        cli=True)
     args.add_arg('replay_rate', '1.0', cli=True)
-    args.add_arg('replay_additional_args', '', cli=True)
-    args.add_arg('rosbag_start_delay_s', '0.0', cli=True)
+    args.add_arg('rosbag_start_delay_s', '3.0', cli=True)
+    args.add_arg('replay_additional_args', '--disable-keyboard-controls', cli=True)
 
     args.add_arg('map_dir', '', cli=True)
 
-    # vslam parameters
-    args.add_arg('enable_vslam', True, cli=True)
-    args.add_arg('vslam_enable_slam', True, cli=True)
-    args.add_arg('vslam_enable_ground_constraint_in_odometry', False, cli=True)
-    args.add_arg('vslam_enable_ground_constraint_in_slam', False, cli=True)
-    args.add_arg('vslam_enable_visualization', False, cli=True)
-
     args.add_arg('enable_vgl', True, cli=True)
-
+    args.add_arg('enable_vslam', True, cli=True)
+    args.add_arg('vslam_enable_slam', False, cli=True)
     args.add_arg('enable_foxglove_bridge', True, cli=True)
     args.add_arg('use_foxglove_whitelist', True, cli=True)
     args.add_arg('type_negotiation_duration_s', lu.get_default_negotiation_time(), cli=True)
@@ -154,24 +158,21 @@ def generate_launch_description() -> lut.LaunchDescription:
     args.add_opaque_function(add_nodes)
 
     actions = args.get_launch_actions()
-
     actions.append(
         lut.SetParameter('type_negotiation_duration_s', args.type_negotiation_duration_s))
     actions.append(
         lu.log_info([f'Using type negotiation duration: {args.type_negotiation_duration_s}']))
-
     actions.append(
         lu.include(
             'isaac_mapping_ros',
             'launch/tools/foxglove_bridge.launch.py',
             launch_arguments={
                 'use_foxglove_whitelist': args.use_foxglove_whitelist,
-                'rectified_images': True,
-                'camera_names': args.camera_name,
+                'rectified_images': False,
+                'camera_names': args.camera_names,
             },
             condition=IfCondition(args.enable_foxglove_bridge),
         ))
-
     actions.append(
         lu.play_rosbag(args.rosbag,
                        rate=args.replay_rate,
@@ -179,15 +180,4 @@ def generate_launch_description() -> lut.LaunchDescription:
                        additional_bag_play_args=args.replay_additional_args,
                        shutdown_on_exit=True,
                        condition=IfCondition(lu.is_valid(args.rosbag))))
-
-    actions.append(
-        lu.include(
-            'isaac_mapping_ros',
-            'launch/sensors/realsense.launch.py',
-            launch_arguments={
-                'camera_name': args.camera_name,
-            },
-            condition=UnlessCondition(lu.is_valid(args.rosbag)),
-        ))
-
     return lut.LaunchDescription(actions)

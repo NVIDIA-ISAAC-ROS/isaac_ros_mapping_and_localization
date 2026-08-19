@@ -77,9 +77,13 @@ ament_auto_add_library(
 
 target_link_libraries(
   visual_global_localization_node
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::cusparse
   transform_manager
   gflags
 )
+target_link_options(visual_global_localization_node PRIVATE "LINKER:--no-as-needed")
 
 # isaac_ros_visual_global_localization executable
 ament_auto_add_executable(${ISAAC_ROS_VISUAL_LOCALIZATION_NAME}
@@ -134,9 +138,13 @@ ament_auto_add_library(
 
 target_link_libraries(
   global_localization_mapper_node
+  CUDA::cublas
+  CUDA::cusolver
+  CUDA::cusparse
   transform_manager
   gflags
 )
+target_link_options(global_localization_mapper_node PRIVATE "LINKER:--no-as-needed")
 
 ament_auto_add_executable(${ISAAC_ROS_GLOBAL_LOCALIZATION_MAPPER_NAME}
   src/global_localization_mapper_main.cpp

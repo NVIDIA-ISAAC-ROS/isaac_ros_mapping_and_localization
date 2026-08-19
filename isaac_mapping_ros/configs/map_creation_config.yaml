@@ -1,15 +1,18 @@
 nvblox:
-  projective_integrator_max_integration_distance_m: 2.5
+  projective_integrator_max_integration_distance_m: 4.0
 
   use_2d_esdf_mode: true
-  experimental_use_ground_plane_estimation: true
+
+  # Parameter for first round nvblox, to estimate ground plane parameters:
   ground_points_candidates_min_z_m: -2.0
   slice_height_above_plane_m: 0.3
   slice_height_thickness_m: 0.5
 
-  workspace_bounds_type: 1 # 1 = WORKSPACE_BOUNDS_TYPE_HEIGHT_BOUNDS
-  workspace_bounds_min_height_m: -2.0
-  workspace_bounds_max_height_m: 2.0
+  # Parameter for second round nvblox, to generate occupancy map in ground-adjusted workspace:
+  esdf_slice_min_height: 0.3
+  esdf_slice_max_height: 1.0
+
+  workspace_bounds_type: 0
 
   mapping_type_dynamic: true
   mapping_type_static_occupancy: false
@@ -18,8 +21,6 @@ nvblox:
 
 cuvslam:
   cfg_enable_slam: true # Enable localization and mapping
-  ros_frame_conversion: true # Convert input/output poses from/to ROS frame
-  print_format: tum # Format of output poses (options: matrix, tum)
 
   cfg_denoising: false # Enable image denoising (matches navigation: enable_image_denoising: False)
   cfg_max_frame_delta_s: 0.034 # Set maximum camera frame time in seconds (matches navigation: image_jitter_threshold_ms: 34.0)
@@ -38,9 +39,6 @@ cuvslam:
   cfg_sync_slam: true # Run localization and mapping in same thread with visual odometry
   # Required for GetState() when SLAM is enabled (cuVSLAM 15+, nitros launcher)
   cfg_enable_export: true
-
-  # repeat
-  repeat: 1 # Number of repetitions of the dataset
 
   # export
   debug_dump: false # Enable debug dump (saves to <map_dir>/logs when true)

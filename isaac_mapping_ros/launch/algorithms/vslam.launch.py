@@ -15,8 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import isaac_ros_launch_utils.all_types as lut
 import isaac_ros_launch_utils as lu
+import isaac_ros_launch_utils.all_types as lut
 
 
 def remap(i: int, name: str, identifier: str, rectified: bool) -> list[tuple[str, str]]:
@@ -53,59 +53,62 @@ def add_vslam(args: lu.ArgumentContainer) -> list[lut.Action]:
     # Isaac Sim publishes images at 20hz
     # Set image jitter threshold ms to keep the vslam node from spamming warnings
     image_jitter_threshold_ms = 51.0 if args.is_sim else 34.0
+    params = {
+        # Images:
+        'num_cameras': 2 * len(camera_names),
+        'min_num_images': 2 * len(camera_names),
+        'enable_image_denoising': False,
+        'enable_localization_n_mapping':
+            lut.ParameterValue(args.vslam_enable_slam, value_type=bool),
+        'slam_throttling_time_ms': 10000,
+        'enable_ground_constraint_in_odometry': lut.ParameterValue(
+            args.vslam_enable_ground_constraint_in_odometry, value_type=bool),
+        'enable_ground_constraint_in_slam': lut.ParameterValue(
+            args.vslam_enable_ground_constraint_in_slam, value_type=bool),
+        'enable_imu_fusion': lut.ParameterValue(args.vslam_enable_imu, value_type=bool),
+        'gyro_noise_density': 0.000244,
+        'gyro_random_walk': 0.000019393,
+        'accel_noise_density': 0.001862,
+        'accel_random_walk': 0.003,
+        'calibration_frequency': 200.0,
+        'image_qos': args.vslam_image_qos,
+        'save_map_folder_path': args.vslam_save_map_folder_path,
+        'load_map_folder_path': args.vslam_load_map_folder_path,
+        'localize_on_startup':
+            lut.ParameterValue(args.vslam_localize_on_startup, value_type=bool),
+        'image_jitter_threshold_ms': image_jitter_threshold_ms,
+        'enable_request_hint': args.vslam_enable_request_hint,
+        # It's recommended to use image masking with unrectified images.
+        'rectified_images': args.vslam_use_rectified_images,
+        'img_mask_bottom': args.vslam_img_mask_bottom,
+        'img_mask_left': args.vslam_img_mask_left,
+        'img_mask_right': args.vslam_img_mask_right,
+        # Frames:
+        'map_frame': args.vslam_map_frame,
+        'odom_frame': args.vslam_odom_frame,
+        'base_frame': args.vslam_base_frame,
+        'imu_frame': 'front_stereo_camera_imu',
+        'publish_odom_to_base_tf': args.publish_odom_to_base_tf,
+        'publish_map_to_odom_tf': args.vslam_publish_map_to_odom_tf,
+        'invert_odom_to_base_tf': args.invert_odom_to_base_tf,
+        # Visualization:
+        'path_max_size': 1024,
+        'enable_slam_visualization': lut.ParameterValue(
+            args.vslam_enable_visualization, value_type=bool),
+        'enable_observations_view': lut.ParameterValue(
+            args.vslam_enable_visualization, value_type=bool),
+        'enable_landmarks_view': lut.ParameterValue(
+            args.vslam_enable_visualization, value_type=bool),
+        'verbosity': 10,
+    }
+    if camera_optical_frames:
+        params['camera_optical_frames'] = camera_optical_frames
+
     visual_slam_node = lut.ComposableNode(
         name='visual_slam_node',
         package='isaac_ros_visual_slam',
         plugin='nvidia::isaac_ros::visual_slam::VisualSlamNode',
-        parameters=[{
-            # Images:
-            'num_cameras': 2 * len(camera_names),
-            'min_num_images': 2 * len(camera_names),
-            'enable_image_denoising': False,
-            'enable_localization_n_mapping':
-                lut.ParameterValue(args.vslam_enable_slam, value_type=bool),
-            'slam_throttling_time_ms': 10000,
-            'enable_ground_constraint_in_odometry': lut.ParameterValue(
-                args.vslam_enable_ground_constraint_in_odometry, value_type=bool),
-            'enable_ground_constraint_in_slam': lut.ParameterValue(
-                args.vslam_enable_ground_constraint_in_slam, value_type=bool),
-            'enable_imu_fusion': lut.ParameterValue(args.vslam_enable_imu, value_type=bool),
-            'gyro_noise_density': 0.000244,
-            'gyro_random_walk': 0.000019393,
-            'accel_noise_density': 0.001862,
-            'accel_random_walk': 0.003,
-            'calibration_frequency': 200.0,
-            'image_qos': args.vslam_image_qos,
-            'save_map_folder_path': args.vslam_save_map_folder_path,
-            'load_map_folder_path': args.vslam_load_map_folder_path,
-            'localize_on_startup':
-                lut.ParameterValue(args.vslam_localize_on_startup, value_type=bool),
-            'image_jitter_threshold_ms': image_jitter_threshold_ms,
-            'enable_request_hint': args.vslam_enable_request_hint,
-            # It's recommended to use image masking with unrectified images.
-            'rectified_images': args.vslam_use_rectified_images,
-            'img_mask_bottom': args.vslam_img_mask_bottom,
-            'img_mask_left': args.vslam_img_mask_left,
-            'img_mask_right': args.vslam_img_mask_right,
-            # Frames:
-            'map_frame': args.vslam_map_frame,
-            'odom_frame': args.vslam_odom_frame,
-            'base_frame': args.vslam_base_frame,
-            'imu_frame': 'front_stereo_camera_imu',
-            'publish_odom_to_base_tf': args.publish_odom_to_base_tf,
-            'publish_map_to_odom_tf': args.vslam_publish_map_to_odom_tf,
-            'invert_odom_to_base_tf': args.invert_odom_to_base_tf,
-            # Visualization:
-            'path_max_size': 1024,
-            'enable_slam_visualization': lut.ParameterValue(
-                args.vslam_enable_visualization, value_type=bool),
-            'enable_observations_view': lut.ParameterValue(
-                args.vslam_enable_visualization, value_type=bool),
-            'enable_landmarks_view': lut.ParameterValue(
-                args.vslam_enable_visualization, value_type=bool),
-            'verbosity': 10,
-            'camera_optical_frames': camera_optical_frames,
-            }],
+        parameters=[params],
         remappings=remappings,
     )
 

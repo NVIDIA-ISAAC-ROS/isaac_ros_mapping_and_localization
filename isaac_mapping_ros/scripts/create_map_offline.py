@@ -29,8 +29,11 @@ import ament_index_python.packages as packages
 from create_map_utils import (
     build_cuvslam_command_api_launcher,
     build_nvblox_command,
+    convert_cuvslam_pose_outputs_for_opencv_edex,
     load_map_creation_config,
     parse_config_overrides,
+    prepare_cuvslam_edex_dataset,
+    transform_frames_meta_to_ground_frame,
 )
 from isaac_common_py import arg_utils
 from isaac_common_py import filesystem_utils
@@ -40,6 +43,7 @@ import rosbag2_py
 
 ROS_WS = pathlib.Path(os.environ.get('ISAAC_ROS_WS'))
 VISUAL_MAPPING_PACKAGE_NAME = 'isaac_ros_visual_mapping'
+VISUAL_SLAM_PACKAGE_NAME = 'isaac_ros_visual_slam'
 ISAAC_MAPPING_ROS_PACKAGE_NAME = 'isaac_mapping_ros'
 
 
@@ -50,6 +54,10 @@ def get_path(package: str, path: str) -> pathlib.Path:
 
 def get_isaac_ros_visual_mapping_package_path() -> pathlib.Path:
     return pathlib.Path(packages.get_package_prefix(VISUAL_MAPPING_PACKAGE_NAME))
+
+
+def get_isaac_ros_visual_slam_package_path() -> pathlib.Path:
+    return pathlib.Path(packages.get_package_prefix(VISUAL_SLAM_PACKAGE_NAME))
 
 
 def get_visual_mapping_config_dir() -> pathlib.Path:
@@ -210,6 +218,16 @@ def parse_args():
         help='Directory containing VGL models (default: uses $(ros2 pkg prefix --share '
              'isaac_ros_visual_mapping)/models/',
     )
+    parser.add_argument(
+        '--use_cuvslam_opencv_compat',
+        type=arg_utils.str_to_bool,
+        nargs='?',
+        const=True,
+        default=True,
+        help='Enable the cuvslam_api_launcher OpenCV convention compatibility shim. '
+             'When enabled, stereo.edex is rewritten for the launcher and the emitted '
+             'TUM pose files are converted back to the ROS-side convention.',
+    )
     return parser.parse_args()
 
 
@@ -299,6 +317,7 @@ def main():
                 args.use_raw_image,
                 map_config,
                 args.skip_final_cuvslam,
+                args.use_cuvslam_opencv_compat,
             )
         else:
             # Run standard workflow
@@ -309,7 +328,8 @@ def main():
                 args.print_mode,
                 duration,
                 args.use_raw_image,
-                map_config
+                map_config,
+                args.use_cuvslam_opencv_compat,
             )
 
         # Generate comparison reports (before depth inference)
@@ -430,18 +450,13 @@ def run_cuvslam_api_launcher(edex_path: pathlib.Path,
                              timeout: int,
                              cuvslam_config: dict = None,
                              use_raw_image: bool = True,
+                             use_cuvslam_opencv_compat: bool = True,
                              mnemonic: str = 'Run cuvslam_api_launcher'):
-    additional_path = get_path('isaac_ros_visual_slam', '../cuvslam/lib/').resolve()
-    ld_library_path = os.environ['LD_LIBRARY_PATH']
-    os.environ['LD_LIBRARY_PATH'] = f'{ld_library_path}:{additional_path}'
-    base_command = [
-        'ros2',
-        'run',
-        'isaac_ros_visual_slam',
-        'cuvslam_api_launcher',
-        f'--dataset={edex_path}',
-        f'--output_map={output_map_dir}',
-    ]
+    additional_path = get_isaac_ros_visual_slam_package_path() / 'lib'
+    ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
+    os.environ['LD_LIBRARY_PATH'] = (
+        f'{ld_library_path}:{additional_path}' if ld_library_path else str(additional_path)
+    )
     if cuvslam_config is None:
         cuvslam_config = {}
     else:
@@ -452,6 +467,20 @@ def run_cuvslam_api_launcher(edex_path: pathlib.Path,
         cuvslam_config['cfg_horizontal'] = True
     if cuvslam_config.get('cfg_enable_slam', False):
         cuvslam_config.setdefault('cfg_enable_export', True)
+
+    launcher_edex_path = edex_path
+    if use_cuvslam_opencv_compat:
+        launcher_edex_path = prepare_cuvslam_edex_dataset(
+            edex_path=edex_path,
+        )
+    base_command = [
+        'ros2',
+        'run',
+        'isaac_ros_visual_slam',
+        'cuvslam_api_launcher',
+        f'--dataset={launcher_edex_path}',
+        f'--output_map={output_map_dir}',
+    ]
     command = build_cuvslam_command_api_launcher(base_command, cuvslam_config, log_folder,
                                                  output_poses_dir)
     subprocess_utils.run_command(
@@ -461,6 +490,8 @@ def run_cuvslam_api_launcher(edex_path: pathlib.Path,
         print_mode=print_mode,
         timeout=timeout,
     )
+    if use_cuvslam_opencv_compat:
+        convert_cuvslam_pose_outputs_for_opencv_edex(output_poses_dir)
 
 
 def create_cuvslam_map(
@@ -472,6 +503,7 @@ def create_cuvslam_map(
     timeout: int,
     map_config: dict,
     use_raw_image: bool = True,
+    use_cuvslam_opencv_compat: bool = True,
 ):
     if not map_config:
         raise ValueError("map_config is required")
@@ -488,6 +520,7 @@ def create_cuvslam_map(
                              timeout=timeout,
                              cuvslam_config=cuvslam_config,
                              use_raw_image=use_raw_image,
+                             use_cuvslam_opencv_compat=use_cuvslam_opencv_compat,
                              mnemonic='Create cuVSLAM map with cuvslam_api_launcher')
     repeat_count = cuvslam_config.get('repeat', 1)
     print(f"Checking repeat count: {repeat_count}")
@@ -658,6 +691,8 @@ def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
             f"Cannot create occupancy map: Metadata file {frames_meta_file} does not exist. "
             f"Run 'compute_poses' step first.")
 
+    occupancy_nvblox_config = dict(nvblox_config)
+
     if adjust_nvblox_bounds_by_kf_pose:
         min_max_z = load_optimized_keyframe_min_max_z(str(output_dir))
         if min_max_z is None:
@@ -666,42 +701,88 @@ def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
             )
 
         min_z, max_z = min_max_z
-        nvblox_config['ground_points_candidates_min_z_m'] += min_z
-        nvblox_config['workspace_bounds_min_height_m'] += min_z
-        nvblox_config['workspace_bounds_max_height_m'] += max_z
+        occupancy_nvblox_config['ground_points_candidates_min_z_m'] += min_z
+        occupancy_nvblox_config['workspace_bounds_min_height_m'] += min_z
+        occupancy_nvblox_config['workspace_bounds_max_height_m'] += max_z
         print(f"Adjusted nvblox z bounds using optimized keyframe min/max z: {min_z} to {max_z}:")
-        ground_points_min_z = nvblox_config['ground_points_candidates_min_z_m']
-        workspace_min_z = nvblox_config['workspace_bounds_min_height_m']
-        workspace_max_z = nvblox_config['workspace_bounds_max_height_m']
+        ground_points_min_z = occupancy_nvblox_config['ground_points_candidates_min_z_m']
+        workspace_min_z = occupancy_nvblox_config['workspace_bounds_min_height_m']
+        workspace_max_z = occupancy_nvblox_config['workspace_bounds_max_height_m']
         print(f"  ground_points_candidates_min_z_m: {ground_points_min_z}")
         print(f"  workspace_bounds_min_height_m: {workspace_min_z}")
         print(f"  workspace_bounds_max_height_m: {workspace_max_z}")
 
-    occupancy_map_path = f'{output_dir}/occupancy_map'
-    mesh_output_path = f'{output_dir}/mesh.ply'
+    first_pass_nvblox_config = dict(occupancy_nvblox_config)
+    first_pass_nvblox_config['experimental_use_ground_plane_estimation'] = True
+
+    occupancy_map_path_before_adjustment = f'{output_dir}/occupancy_map_before_adjustment'
+    mesh_output_path_before_adjustment = f'{output_dir}/mesh_before_adjustment.ply'
     base_command = [
         'ros2',
         'run',
         'nvblox_ros',
         'fuse_cusfm',
-        f'--save_2d_occupancy_map_path={occupancy_map_path}',
+        f'--save_2d_occupancy_map_path={occupancy_map_path_before_adjustment}',
         f'--color_image_dir={color_img_dir}',
         f'--frames_meta_file={frames_meta_file}',
         f'--depth_image_dir={depth_img_dir}',
-        f'--mesh_output_path={mesh_output_path}',
+        f'--mesh_output_path={mesh_output_path_before_adjustment}',
     ]
 
-    command = build_nvblox_command(base_command, nvblox_config, output_dir)
+    command = build_nvblox_command(base_command, first_pass_nvblox_config, output_dir)
 
     subprocess_utils.run_command(
-        mnemonic='Run Nvblox',
+        mnemonic='Run Nvblox (ground plane estimation pass)',
         command=command,
+        log_file=log_folder / 'fuse_cusfm_ground_plane.log',
+        print_mode=print_mode,
+        timeout=timeout,
+    )
+
+    ground_plane_file = output_dir / 'ground_plane.yaml'
+    if not ground_plane_file.exists():
+        print(f'Error: Ground plane was not detected. Expected output: {ground_plane_file}')
+        raise RuntimeError(
+            f'Something went wrong! Ground plane file not found at {ground_plane_file}.'
+        )
+
+    ground_aligned_frames_meta_file = frames_meta_file.with_name(
+        'frames_meta_ground_adjusted.json')
+    transform_frames_meta_to_ground_frame(
+        frames_meta_file,
+        ground_plane_file,
+        ground_aligned_frames_meta_file,
+    )
+
+    occupancy_map_path = f'{output_dir}/occupancy_map'
+    mesh_output_path = f'{output_dir}/mesh.ply'
+
+    second_pass_nvblox_config = dict(occupancy_nvblox_config)
+    second_pass_nvblox_config['experimental_use_ground_plane_estimation'] = False
+    second_pass_command = build_nvblox_command(
+        [
+            'ros2',
+            'run',
+            'nvblox_ros',
+            'fuse_cusfm',
+            f'--save_2d_occupancy_map_path={occupancy_map_path}',
+            f'--color_image_dir={color_img_dir}',
+            f'--frames_meta_file={ground_aligned_frames_meta_file}',
+            f'--depth_image_dir={depth_img_dir}',
+            f'--mesh_output_path={mesh_output_path}',
+        ],
+        second_pass_nvblox_config,
+        output_dir,
+    )
+
+    subprocess_utils.run_command(
+        mnemonic='Run Nvblox (ground-aligned occupancy pass)',
+        command=second_pass_command,
         log_file=log_folder / 'fuse_cusfm.log',
         print_mode=print_mode,
         timeout=timeout,
     )
 
-    # check occupancy map file is generated
     if not os.path.exists(occupancy_map_path + '.png'):
         raise RuntimeError(
             f'Something went wrong! Occupancy image not found at {occupancy_map_path}.png.')
@@ -863,7 +944,8 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
                        duration: float,
                        use_raw_image: bool,
                        map_config: dict,
-                       skip_final_cuvslam: bool = False):
+                       skip_final_cuvslam: bool = False,
+                       use_cuvslam_opencv_compat: bool = True):
     print("=== Starting CUSFM Workflow ===")
     cusfm_base_dir = output_folder / 'cusfm'
     initial_cuvslam_map_dir = cusfm_base_dir / 'cuvslam_map'
@@ -881,7 +963,8 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
     initial_cuvslam_map_dir.mkdir(parents=True, exist_ok=True)
     initial_cuvslam_poses_dir.mkdir(parents=True, exist_ok=True)
     create_cuvslam_map(edex_path, initial_cuvslam_map_dir, initial_cuvslam_poses_dir, log_folder,
-                       print_mode, cuvslam_timeout, map_config, use_raw_image)
+                       print_mode, cuvslam_timeout, map_config, use_raw_image,
+                       use_cuvslam_opencv_compat)
     print("Step 2: Running map frames step")
     cuvslam_odom_tum_file = initial_cuvslam_poses_dir / 'odom_poses.tum'
     cuvslam_kf_tum_file = initial_cuvslam_poses_dir / 'keyframe_pose.tum'
@@ -946,7 +1029,8 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
 
 def run_standard_workflow(edex_path: pathlib.Path, output_folder: pathlib.Path,
                           log_folder: pathlib.Path, print_mode: str, duration: float,
-                          use_raw_image: bool, map_config: dict):
+                          use_raw_image: bool, map_config: dict,
+                          use_cuvslam_opencv_compat: bool = True):
     print("=== Starting Standard Workflow ===")
     output_cuvslam_map_dir = output_folder / 'cuvslam_map'
     output_cuvslam_poses_dir = output_folder / 'poses'
@@ -954,7 +1038,8 @@ def run_standard_workflow(edex_path: pathlib.Path, output_folder: pathlib.Path,
     output_cuvslam_map_dir.mkdir(parents=True, exist_ok=True)
     output_cuvslam_poses_dir.mkdir(parents=True, exist_ok=True)
     create_cuvslam_map(edex_path, output_cuvslam_map_dir, output_cuvslam_poses_dir, log_folder,
-                       print_mode, cuvslam_timeout, map_config, use_raw_image)
+                       print_mode, cuvslam_timeout, map_config, use_raw_image,
+                       use_cuvslam_opencv_compat)
     cuvslam_odom_tum_file = output_cuvslam_poses_dir / 'odom_poses.tum'
     cuvslam_kf_tum_file = output_cuvslam_poses_dir / 'keyframe_pose.tum'
     cuvslam_kf_optimized_tum_file = output_cuvslam_poses_dir / 'keyframe_pose_optimized.tum'
