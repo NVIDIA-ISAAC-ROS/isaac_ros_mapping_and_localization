@@ -22,12 +22,13 @@
 
 #include <cv_bridge/cv_bridge.hpp>
 
+#include "cuda_buffer/cuda_buffer_api.hpp"
 #include "common/file_utils/file_utils.h"
 #include "common/macros/macros.h"
 #include "protos/visual/loop_closing/image_retrieval_config.pb.h"
 #include "visual/utils/constants.h"
 #include "isaac_ros_common/qos.hpp"
-#include "isaac_ros_visual_global_localization/constants.h"
+#include "isaac_ros_visual_global_localization/constants.hpp"
 #include "isaac_ros_common/cuda_stream.hpp"
 
 namespace nvidia
@@ -41,14 +42,16 @@ using isaac::common::file_utils::FileUtils;
 
 double GetImageTimestampInMillis(const ImageType & image)
 {
-  return image.timestamp_sec * kSecondsToMilliseconds +
-         image.timestamp_nsec / kMillisecondsToNanoseconds;
+  return image->header.stamp.sec * kSecondsToMilliseconds +
+         image->header.stamp.nanosec / kMillisecondsToNanoseconds;
 }
 
 GlobalLocalizationMapperNode::GlobalLocalizationMapperNode(
   const rclcpp::NodeOptions & options)
 : Node("global_localization_mapper_node", options), transform_manager_(this)
 {
+  cuda_stream_ = ::nvidia::isaac_ros::common::createCudaStream(
+    "isaac_ros_visual_global_mapper_localization");
   if (!getParameters()) {
     RCLCPP_FATAL(get_logger(), "Failed to get parameters.");
     exit(EXIT_FAILURE);
@@ -65,10 +68,6 @@ GlobalLocalizationMapperNode::GlobalLocalizationMapperNode(
 
 GlobalLocalizationMapperNode::~GlobalLocalizationMapperNode()
 {
-  // Add CUDA stream support so that this node does not block the default stream
-  CHECK_CUDA_ERROR(::nvidia::isaac_ros::common::initNamedCudaStream(
-    cuda_stream_, "isaac_ros_visual_global_mapper_localization"),
-    "Error initializing CUDA stream");
   // Save db file to disk
   RCLCPP_INFO(get_logger(), "Saving database to disk...");
   const std::string db_filename = FileUtils::JoinPath(
@@ -232,13 +231,16 @@ void GlobalLocalizationMapperNode::subscribeToTopics()
   // Subscribe to the image topic
   const rclcpp::QoS input_qos = ::isaac_ros::common::AddQosParameter(
     *this, kImageQosProfile, "input_qos");
+  rclcpp::SubscriptionOptions image_sub_options;
+  image_sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  image_sub_options.acceptable_buffer_backends = "any";
   for (int i = 0; i < num_cameras_; i++) {
     image_subs_.emplace_back(
-      create_subscription<ImageType>(
+      create_subscription<sensor_msgs::msg::Image>(
         input_image_topic_ + "_" + std::to_string(i), input_qos,
-        [this, i](const ImageType::ConstSharedPtr & msg) {
+        [this, i](const ImageType & msg) {
           return inputImageCallback(msg, i);
-        }));
+        }, image_sub_options));
     camera_info_subs_.emplace_back(
       create_subscription<CameraInfoType>(
         input_camera_info_topic_name_ + "_" + std::to_string(i), input_qos,
@@ -249,16 +251,15 @@ void GlobalLocalizationMapperNode::subscribeToTopics()
 }
 
 void GlobalLocalizationMapperNode::inputImageCallback(
-  const ImageType::ConstSharedPtr & image_msg,
+  const ImageType & image_msg,
   camera_params_id_t camera_id)
 {
-  const rclcpp::Time timestamp = rclcpp::Time(
-    image_msg->timestamp_sec, image_msg->timestamp_nsec, RCL_ROS_TIME);
+  const rclcpp::Time timestamp(image_msg->header.stamp, RCL_ROS_TIME);
   RCLCPP_DEBUG_STREAM(
     get_logger(),
     "[" << std::this_thread::get_id() << "] inputImageCallback " << camera_id << ", sec: "
         << std::fixed << std::setprecision(3) << (double)timestamp.nanoseconds() / 1e9);
-  sync_->AddMessage(camera_id, timestamp.nanoseconds(), *image_msg, false);
+  sync_->AddMessage(camera_id, timestamp.nanoseconds(), image_msg, false);
 }
 
 void GlobalLocalizationMapperNode::inputCameraInfoCallback(
@@ -330,20 +331,19 @@ void GlobalLocalizationMapperNode::callbackSynchronizedImages(
   const std::vector<std::pair<int,
   ImageType>> & idx_and_image_msgs)
 {
-  std::unordered_map<std::string, std::shared_ptr<ImageType>> images;
+  std::unordered_map<std::string, ImageType> images;
   for (const auto & [idx, image] : idx_and_image_msgs) {
-    images[image.frame_id] = std::make_shared<ImageType>(image);
+    images[image->header.frame_id] = image;
   }
   processImages(images);
 }
 
 bool GlobalLocalizationMapperNode::processImages(
-  const std::unordered_map<std::string, std::shared_ptr<ImageType>> & images)
+  const std::unordered_map<std::string, ImageType> & images)
 {
   // Check if the image is a keyframe, only check one image as they are in sync
-  const rclcpp::Time first_image_timestamp = rclcpp::Time(
-    images.begin()->second->timestamp_sec,
-    images.begin()->second->timestamp_nsec, RCL_ROS_TIME);
+  const rclcpp::Time first_image_timestamp(
+    images.begin()->second->header.stamp, RCL_ROS_TIME);
   const std::string first_image_frame_id = images.begin()->first;
   if (!CheckKeyframe(first_image_frame_id, first_image_timestamp)) {
     RCLCPP_INFO(get_logger(), "This is not a keyframe, skipping...");
@@ -351,19 +351,16 @@ bool GlobalLocalizationMapperNode::processImages(
   }
   for (const auto & image : images) {
     const std::string & frame_id = image.first;
-    const auto & nitros_image = image.second;
-    const rclcpp::Time timestamp =
-      rclcpp::Time(
-      nitros_image->timestamp_sec,
-      nitros_image->timestamp_nsec, RCL_ROS_TIME);
-    Transform map_T_camera; // from cuVSLAM
+    const auto & image_msg = image.second;
+    const rclcpp::Time timestamp(image_msg->header.stamp, RCL_ROS_TIME);
+    Transform map_T_camera;  // from cuVSLAM
     if (!transform_manager_.lookupTransformTf(map_frame_, frame_id, timestamp, &map_T_camera)) {
       RCLCPP_ERROR(
         get_logger(), "Failed to get transform for frame_id: %s to map frame",
         frame_id.c_str());
       continue;
     }
-    if (!keyframeExtractAndMapping(nitros_image, map_T_camera)) {
+    if (!keyframeExtractAndMapping(image_msg, map_T_camera)) {
       RCLCPP_ERROR(get_logger(), "Failed to extract keyframes");
       return false;
     }
@@ -403,28 +400,28 @@ bool GlobalLocalizationMapperNode::CheckKeyframe(
 }
 
 bool GlobalLocalizationMapperNode::keyframeExtractAndMapping(
-  const std::shared_ptr<ImageType> image, const Transform & pose)
+  const ImageType & image, const Transform & pose)
 {
-  // Convert the NitrosImage to sensor_msgs::msg::Image
   sensor_msgs::msg::Image img_msg;
-  img_msg.header.frame_id = image->frame_id;
-  img_msg.header.stamp.sec = static_cast<int32_t>(image->timestamp_sec);
-  img_msg.header.stamp.nanosec = image->timestamp_nsec;
+  img_msg.header = image->header;
   img_msg.height = image->height;
   img_msg.width = image->width;
   img_msg.encoding = image->encoding;
+  img_msg.is_bigendian = image->is_bigendian;
   img_msg.step = image->step;
-  const size_t size_in_bytes = image->get_data_size();
+  const size_t size_in_bytes = image->data.size();
   img_msg.data.resize(size_in_bytes);
 
-  auto read_handle = image->get_read_handle(cuda_stream_);
-  if (cudaMemcpyAsync(img_msg.data.data(), read_handle.get_ptr(),
-                      size_in_bytes, cudaMemcpyDefault,
-                      cuda_stream_) != cudaSuccess) {
+  auto read_handle = cuda_buffer_backend::from_input_buffer(image->data, *cuda_stream_);
+  if (cudaMemcpyAsync(
+      img_msg.data.data(), read_handle.get_ptr(),
+      size_in_bytes, cudaMemcpyDefault,
+      *cuda_stream_) != cudaSuccess)
+  {
     RCLCPP_ERROR(get_logger(), "Failed to do the memcpy");
     return false;
   }
-  if (cudaStreamSynchronize(cuda_stream_) != cudaSuccess) {
+  if (cudaStreamSynchronize(*cuda_stream_) != cudaSuccess) {
     RCLCPP_ERROR(get_logger(), "Failed to synchronize stream");
     return false;
   }
@@ -521,9 +518,9 @@ bool GlobalLocalizationMapperNode::saveKeyframeToDisk(
   RCLCPP_INFO_STREAM(
     get_logger(),
     "Writing key frame: " << frame_id << " at timestamp: "
-      << timestamp_microseconds << " to " << keyframe_path
-      << " total number of key points on this frame: "
-      << keyframe.keypoints().size());
+                          << timestamp_microseconds << " to " << keyframe_path
+                          << " total number of key points on this frame: "
+                          << keyframe.keypoints().size());
   STATUS_OK_OR_RETURN_FALSE(
     FileUtils::WriteProtoFileByExtension(
       keyframe_path,
@@ -568,9 +565,9 @@ bool GlobalLocalizationMapperNode::setCameraParams()
   return true;
 }
 
-} // namespace visual_global_localization
-} // namespace isaac_ros
-} // namespace nvidia
+}  // namespace visual_global_localization
+}  // namespace isaac_ros
+}  // namespace nvidia
 
 // Register as a component
 #include "rclcpp_components/register_node_macro.hpp"

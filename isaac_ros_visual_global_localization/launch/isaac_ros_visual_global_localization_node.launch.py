@@ -17,8 +17,8 @@
 
 from typing import List
 
-from isaac_ros_launch_utils.all_types import Action, LaunchDescription
 import isaac_ros_launch_utils as lu
+from isaac_ros_launch_utils.all_types import Action, LaunchDescription
 
 
 def add_visual_global_localization(args: lu.ArgumentContainer) -> List[Action]:

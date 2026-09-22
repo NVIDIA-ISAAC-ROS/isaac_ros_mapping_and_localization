@@ -99,9 +99,7 @@ ament_target_dependencies(visual_global_localization_node
   tf2_geometry_msgs
   tf2_ros
   cv_bridge
-  isaac_ros_nitros
-  isaac_ros_managed_nitros
-  isaac_ros_nitros_image_type
+  cuda_buffer
   std_srvs
 )
 
@@ -155,9 +153,7 @@ ament_target_dependencies(global_localization_mapper_node
   sensor_msgs
   nav_msgs
   cv_bridge
-  isaac_ros_nitros
-  isaac_ros_managed_nitros
-  isaac_ros_nitros_image_type
+  cuda_buffer
 )
 
 # Point cloud filter

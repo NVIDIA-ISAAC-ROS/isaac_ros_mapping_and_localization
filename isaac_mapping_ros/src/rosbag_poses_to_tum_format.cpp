@@ -29,7 +29,6 @@
 #include "isaac_mapping_ros/data_converter_utils.hpp"
 
 
-using namespace nvidia::isaac;
 namespace ConverterUtil =
   isaac_ros::isaac_mapping_ros::data_converter_utils;
 

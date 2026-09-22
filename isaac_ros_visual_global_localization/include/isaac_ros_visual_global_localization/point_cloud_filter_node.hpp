@@ -15,16 +15,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef ISAAC_ROS_CAMERA_LOCALIZATION_POINT_CLOUD_FILTER_NODE_HPP_
-#define ISAAC_ROS_CAMERA_LOCALIZATION_POINT_CLOUD_FILTER_NODE_HPP_
+#ifndef ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__POINT_CLOUD_FILTER_NODE_HPP_
+#define ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__POINT_CLOUD_FILTER_NODE_HPP_
+
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+
+#include <list>
+#include <memory>
+#include <string>
 
 #include "rclcpp/rclcpp.hpp"
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-#include "tf2_ros/transform_listener.h"
-#include "tf2_ros/buffer.h"
 
 namespace nvidia
 {
@@ -34,8 +39,8 @@ namespace visual_global_localization
 {
 //
 // PointCloudFilterNode subsribes to a point cloud topic, a pose topic and /tf.
-// When receiving a pose message, it finds cloud messages close to the pose timestamp from the queue,
-// converts the cloud to a target frame using tf, and publishes the cloud.
+// When receiving a pose message, it finds cloud messages close to the pose timestamp from
+// the queue, converts the cloud to a target frame using tf, and publishes the cloud.
 //
 class PointCloudFilterNode : public rclcpp::Node
 {
@@ -59,7 +64,8 @@ private:
   // the target frame that the output cloud is transformed to.
   std::string target_frame_;
   // queue size for input cloud messages.
-  // When input cloud is 10hz, using queue_size=100 guarantees the associated cloud be queued when pose has 10 seconds delay.
+  // When input cloud is 10hz, using queue_size=100 guarantees the associated cloud be queued
+  // when pose has 10 seconds delay.
   size_t cloud_queue_size_;
   // max time difference between cloud and pose message, to transform the cloud with the pose.
   float time_thresh_sec_;
@@ -70,10 +76,9 @@ private:
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::list<sensor_msgs::msg::PointCloud2::ConstSharedPtr> cloud_queue_;
-
 };
 }  // namespace visual_global_localization
 }  // namespace isaac_ros
 }  // namespace nvidia
 
-#endif  // ISAAC_ROS_CAMERA_LOCALIZATION_POINT_CLOUD_FILTER_NODE_HPP_
+#endif  // ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__POINT_CLOUD_FILTER_NODE_HPP_

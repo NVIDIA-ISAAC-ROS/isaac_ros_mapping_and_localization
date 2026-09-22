@@ -106,7 +106,7 @@ def add_vslam(args: lu.ArgumentContainer) -> list[lut.Action]:
 
     visual_slam_node = lut.ComposableNode(
         name='visual_slam_node',
-        package='isaac_ros_visual_slam',
+        package='isaac_ros_cuvslam',
         plugin='nvidia::isaac_ros::visual_slam::VisualSlamNode',
         parameters=[params],
         remappings=remappings,

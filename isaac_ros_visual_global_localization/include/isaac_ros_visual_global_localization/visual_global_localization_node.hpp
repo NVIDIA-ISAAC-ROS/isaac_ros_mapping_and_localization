@@ -15,30 +15,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef ISAAC_ROS_CAMERA_LOCALIZATION_VISUAL_LOCALIZATION_NODE_HPP_
-#define ISAAC_ROS_CAMERA_LOCALIZATION_VISUAL_LOCALIZATION_NODE_HPP_
+#ifndef ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__VISUAL_GLOBAL_LOCALIZATION_NODE_HPP_
+#define ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__VISUAL_GLOBAL_LOCALIZATION_NODE_HPP_
 
+#include <cuda_runtime.h>  // NOLINT - include .h without directory
+#include <tf2_ros/transform_broadcaster.h>
+
+#include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "isaac_ros_common/cuda_stream.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-#include "tf2_ros/transform_broadcaster.h"
 
 #include "isaac_common/messaging/message_stream_synchronizer.hpp"
-#include "isaac_ros_nitros_image_type/nitros_image.hpp"
 #include "isaac_ros_visual_global_localization/transform_manager.hpp"
 
 #include "common/image/image_rectifier.h"
 #include "visual/cuvgl/cuvgl.h"
 #include "std_srvs/srv/trigger.hpp"
-
-#include "cuda_runtime.h"  // NOLINT - include .h without directory
 
 namespace nvidia
 {
@@ -47,7 +49,7 @@ namespace isaac_ros
 namespace visual_global_localization
 {
 
-using ImageType = nvidia::isaac_ros::nitros::NitrosImage;
+using ImageType = sensor_msgs::msg::Image::ConstSharedPtr;
 using CameraInfoType = sensor_msgs::msg::CameraInfo;
 using SrvTriggerGlobalLocalization = std_srvs::srv::Trigger;
 using MsgTriggerGlobalLocalization = geometry_msgs::msg::PoseWithCovarianceStamped;
@@ -77,11 +79,10 @@ public:
   // check if image rectifier are initialized for input images
   bool checkImageRectifier(
     const std::unordered_map<std::string,
-    std::shared_ptr<ImageType>> & images) const;
+    ImageType> & images) const;
 
-  // Callback function for nitros images
   void inputImageCallback(
-    const ImageType::ConstSharedPtr & image_msg, camera_params_id_t camera_id);
+    const ImageType & image_msg, camera_params_id_t camera_id);
   // Callback function for camera info
   void inputCameraInfoCallback(
     const CameraInfoType::ConstSharedPtr & camera_info_msg,
@@ -97,13 +98,13 @@ public:
   // Process image data
   virtual bool processImages(
     const std::unordered_map<std::string,
-    std::shared_ptr<ImageType>> & images,
+    ImageType> & images,
     rclcpp::Time & timestamp,
     isaac::common::transform::SE3TransformD & localization_pose);
 
 protected:
   bool convertImageMessage(
-    const std::shared_ptr<ImageType> & image,
+    const ImageType & image,
     camera_params_id_t sensor_id,
     isaac::visual::cuvgl::CameraImage & camera_image);
 
@@ -113,7 +114,7 @@ protected:
 
   bool checkImageSync(
     const std::unordered_map<std::string,
-    std::shared_ptr<ImageType>> images);
+    ImageType> images);
 
   void callbackSynchronizedImages(
     const std::vector<std::pair<int, ImageType>> & idx_and_image_mgs);
@@ -139,8 +140,7 @@ protected:
   std::unique_ptr<isaac::visual::cuvgl::cuVGL> cuvgl_;
 
   // ROS publishers and subscribers
-  // nitros image subscribers
-  std::vector<rclcpp::Subscription<ImageType>::SharedPtr> image_subs_;
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> image_subs_;
   // camera info subscriber
   std::vector<rclcpp::Subscription<CameraInfoType>::SharedPtr> camera_info_subs_;
   // Trigger global localization by topic
@@ -263,10 +263,10 @@ protected:
   int num_published_poses_ = 0;
 
   // CUDA stream to process dynamics detection on
-  cudaStream_t cuda_stream_;
+  ::nvidia::isaac_ros::common::CudaStreamPtr cuda_stream_;
 };
 }  // namespace visual_global_localization
 }  // namespace isaac_ros
 }  // namespace nvidia
 
-#endif  // ISAAC_ROS_CAMERA_LOCALIZATION_VISUAL_LOCALIZATION_NODE_HPP_
+#endif  // ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__VISUAL_GLOBAL_LOCALIZATION_NODE_HPP_

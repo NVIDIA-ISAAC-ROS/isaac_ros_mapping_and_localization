@@ -128,5 +128,5 @@ bool VideoDecoder::AVFrameToCVMat(AVFrame * frame, cv::Mat & mat)
   return true;
 }
 
-}
-}
+}  // namespace isaac_mapping_ros
+}  // namespace isaac_ros

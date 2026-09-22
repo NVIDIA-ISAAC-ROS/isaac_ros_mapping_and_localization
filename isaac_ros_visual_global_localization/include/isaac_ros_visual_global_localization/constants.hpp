@@ -39,12 +39,12 @@ static const double kRotationWeight = 5.0;
 static const double kImageSyncMatchThresholdMs = 3.0;
 static const int32_t kCameraFrequency = 30;
 
-static const std::string kAprilTagLocalizationTopic = "pose";
-static const std::string kObservationsFileName = "observations.pb";
+static const char kAprilTagLocalizationTopic[] = "pose";
+static const char kObservationsFileName[] = "observations.pb";
 // the QoS settings for the image input topics
-static const std::string kImageQosProfile = "SYSTEM_DEFAULT";
-static const std::string KOdomFrame = "odom";
+static const char kImageQosProfile[] = "SYSTEM_DEFAULT";
+static const char KOdomFrame[] = "odom";
 
-} // namespace visual_global_localization
-} // namespace isaac_ros
-} // namespace nvidia
+}  // namespace visual_global_localization
+}  // namespace isaac_ros
+}  // namespace nvidia

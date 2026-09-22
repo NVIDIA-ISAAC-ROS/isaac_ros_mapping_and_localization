@@ -26,7 +26,6 @@
 
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
-#include "isaac_ros_nitros_flat_scan_type/nitros_flat_scan.hpp"
 #include "isaac_ros_occupancy_grid_localizer/occupancy_grid_localizer_core.hpp"
 #include "isaac_ros_pointcloud_interfaces/msg/flat_scan.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -57,14 +56,14 @@ public:
     std::shared_ptr<std_srvs::srv::Empty::Response>);
 
   void BufferedFlatScanCallback(
-    const std::shared_ptr<const nvidia::isaac_ros::nitros::NitrosFlatScan> flat_scan);
+    const isaac_ros_pointcloud_interfaces::msg::FlatScan::ConstSharedPtr flat_scan);
 
   void TriggerFlatScanCallback(
-    const std::shared_ptr<const nvidia::isaac_ros::nitros::NitrosFlatScan> flat_scan);
+    const isaac_ros_pointcloud_interfaces::msg::FlatScan::ConstSharedPtr flat_scan);
 
 private:
   void HandleIncomingFlatScan(
-    const nvidia::isaac_ros::nitros::NitrosFlatScan & flat_scan,
+    const isaac_ros_pointcloud_interfaces::msg::FlatScan & flat_scan,
     bool should_localize);
 
   std::optional<geometry_msgs::msg::TransformStamped> LookupBaseLinkToLidarTransform(
@@ -75,10 +74,10 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
     localization_result_publisher_;
 
-  rclcpp::Subscription<nvidia::isaac_ros::nitros::NitrosFlatScan>::SharedPtr
+  rclcpp::Subscription<isaac_ros_pointcloud_interfaces::msg::FlatScan>::SharedPtr
     buffered_flat_scan_subscriber_;
 
-  rclcpp::Subscription<nvidia::isaac_ros::nitros::NitrosFlatScan>::SharedPtr
+  rclcpp::Subscription<isaac_ros_pointcloud_interfaces::msg::FlatScan>::SharedPtr
     trigger_flat_scan_subscriber_;
 
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr grid_search_localize_service_server_;

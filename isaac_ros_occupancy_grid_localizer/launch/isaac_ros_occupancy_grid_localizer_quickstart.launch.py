@@ -57,8 +57,15 @@ def generate_launch_description():
     baselink_lidar_publisher = Node(
         package='tf2_ros', executable='static_transform_publisher',
         output='screen',
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0.0', 'base_link',
-                   'lidar_frame'])
+        arguments=[
+            '--x', '0.0',
+            '--y', '0.0',
+            '--z', '0.0',
+            '--roll', '0.0',
+            '--pitch', '0.0',
+            '--yaw', '0.0',
+            '--frame-id', 'base_link',
+            '--child-frame-id', 'lidar_frame'])
 
     load_nodes = GroupAction(
         actions=[

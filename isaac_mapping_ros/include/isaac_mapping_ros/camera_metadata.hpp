@@ -17,10 +17,12 @@
 
 #pragma once
 
+#include <glog/logging.h>
+
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
-
-#include <glog/logging.h>
 
 #include "protos/common/sensor/camera_sensor.pb.h"
 #include "common/transform/se3_transform.h"
@@ -43,7 +45,6 @@ public:
   void AddTimestamp(uint64_t timestamp_nanoseconds)
   {
     timestamp_nanoseconds_.push_back(timestamp_nanoseconds);
-
   }
 
   void set_camera_topic_name(const std::string & camera_topic_name)
@@ -189,5 +190,5 @@ private:
   std::map<uint64_t, uint64_t> sample_id_to_synced_sample_id_;
 };
 
-} // namespace isaac_mapping_ros
-} // namespace isaac_ros
+}  // namespace isaac_mapping_ros
+}  // namespace isaac_ros

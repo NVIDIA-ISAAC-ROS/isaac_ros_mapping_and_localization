@@ -17,21 +17,22 @@
 
 #include "isaac_ros_visual_global_localization/visual_global_localization_node.hpp"
 
+#include <cuda_runtime.h>
+
 #include <chrono>
 #include <functional>
 #include <thread>
 
-#include "rclcpp/serialization.hpp"
 #include <cv_bridge/cv_bridge.hpp>
-#include <cuda_runtime.h>
 
+#include "cuda_buffer/cuda_buffer_api.hpp"
+#include "rclcpp/serialization.hpp"
 #include "isaac_ros_common/cuda_stream.hpp"
 #include "isaac_ros_common/qos.hpp"
 #include "common/datetime/timer.h"
 #include "common/file_utils/file_utils.h"
 #include "common/image/image_calibration_params.h"
-#include "isaac_ros_visual_global_localization/constants.h"
-#include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
+#include "isaac_ros_visual_global_localization/constants.hpp"
 
 namespace nvidia
 {
@@ -46,8 +47,8 @@ namespace visual_global_localization
 
 uint64_t GetImageTimestampInMicros(const ImageType & image)
 {
-  return image.timestamp_sec * kSecondsToMicroseconds +
-         image.timestamp_nsec / kMicrosecondsToNanoseconds;
+  return image->header.stamp.sec * kSecondsToMicroseconds +
+         image->header.stamp.nanosec / kMicrosecondsToNanoseconds;
 }
 
 sensor_msgs::msg::CameraInfo GetRectifiedCameraInfo(
@@ -70,10 +71,8 @@ VisualGlobalLocalizationNode::VisualGlobalLocalizationNode(const rclcpp::NodeOpt
 : Node("visual_localization", options),
   transform_manager_(this)
 {
-  // Add CUDA stream support so that this node does not block the default stream
-  CHECK_CUDA_ERROR(::nvidia::isaac_ros::common::initNamedCudaStream(
-    cuda_stream_, "isaac_ros_visual_global_localization"),
-    "Error initializing CUDA stream");
+  cuda_stream_ = ::nvidia::isaac_ros::common::createCudaStream(
+    "isaac_ros_visual_global_localization");
 
   getParameters();
   // Initialize the localizer API
@@ -106,7 +105,8 @@ void VisualGlobalLocalizationNode::printConfiguration()
   ss << "publish_rectified_images: " << (publish_rectified_images_ ? "true" : "false") << "\n";
 
   // Localization settings
-  ss << "enable_continuous_localization: " << (enable_continuous_localization_ ? "true" : "false") << "\n";
+  ss << "enable_continuous_localization: " <<
+    (enable_continuous_localization_ ? "true" : "false") << "\n";
   ss << "use_initial_guess: " << (use_initial_guess_ ? "true" : "false") << "\n";
   ss << "localization_precision_level: " << localization_precision_level_ << "\n";
   ss << "vgl_frequency: " << vgl_frequency_ << "\n";
@@ -202,13 +202,13 @@ void VisualGlobalLocalizationNode::getParameters()
     RCLCPP_ERROR(get_logger(), "Invalid num_cameras: %d", num_cameras_);
   }
   if (!camera_optical_frames_.empty() &&
-      camera_optical_frames_.size() != static_cast<size_t>(num_cameras_)) {
+    camera_optical_frames_.size() != static_cast<size_t>(num_cameras_))
+  {
     RCLCPP_ERROR(
       get_logger(),
       "Invalid camera_optical_frames: %zu != %d",
       camera_optical_frames_.size(), num_cameras_);
   }
-  
 
   if (init_glog_) {
     google::InitGoogleLogging(this->get_name());
@@ -286,8 +286,10 @@ void VisualGlobalLocalizationNode::initLocalizerApi()
     }
   }
   // Set debug mode based on vgl_enable_debug flag
-  RCLCPP_INFO_STREAM(get_logger(), "Setting debug mode to: " << (vgl_enable_debug_ ? "enabled" : "disabled")
-                     << " (vgl_enable_debug_ = " << vgl_enable_debug_ << ")");
+  RCLCPP_INFO_STREAM(
+    get_logger(),
+    "Setting debug mode to: " << (vgl_enable_debug_ ? "enabled" : "disabled") <<
+      " (vgl_enable_debug_ = " << vgl_enable_debug_ << ")");
   auto debug_status = cuvgl_->set_enable_debug(vgl_enable_debug_);
   if (!debug_status.ok()) {
     RCLCPP_ERROR_STREAM(get_logger(), "Failed to set debug mode: " << debug_status.message());
@@ -303,13 +305,16 @@ void VisualGlobalLocalizationNode::subscribeToTopics()
   const rclcpp::QoS input_qos = ::isaac_ros::common::AddQosParameter(
     *this, image_qos_profile_,
     "input_qos");
+  rclcpp::SubscriptionOptions image_sub_options;
+  image_sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+  image_sub_options.acceptable_buffer_backends = "any";
   for (int i = 0; i < num_cameras_; ++i) {
     image_subs_.emplace_back(
-      create_subscription<ImageType>(
+      create_subscription<sensor_msgs::msg::Image>(
         input_image_topic_name_ + "_" + std::to_string(i), input_qos,
-        [this, i](const ImageType::ConstSharedPtr & msg) {
+        [this, i](const ImageType & msg) {
           return inputImageCallback(msg, i);
-        }));
+        }, image_sub_options));
     camera_info_subs_.emplace_back(
       create_subscription<CameraInfoType>(
         input_camera_info_topic_name_ + "_" + std::to_string(i), input_qos,
@@ -417,16 +422,17 @@ void VisualGlobalLocalizationNode::callbackSynchronizedImages(
   }
   last_processing_time_ = current_time;
 
-  std::unordered_map<std::string, std::shared_ptr<ImageType>> images;
+  std::unordered_map<std::string, ImageType> images;
   for (const auto & [idx, image] : idx_and_image_msgs) {
-    images[image.frame_id] = std::make_shared<ImageType>(image);
+    images[image->header.frame_id] = image;
   }
 
   rclcpp::Time timestamp;
   isaac::common::transform::SE3TransformD localization_pose;
   isaac::common::datetime::Timer timer;
   bool succeed = processImages(images, timestamp, localization_pose);
-  double execution_time_sec = (double)timer.ElapsedMilliseconds() * kMillisecondsToSeconds;
+  double execution_time_sec =
+    static_cast<double>(timer.ElapsedMilliseconds()) * kMillisecondsToSeconds;
 
   if (succeed) {
     // Publish the TF base_link_T_map
@@ -461,7 +467,7 @@ void VisualGlobalLocalizationNode::callbackSynchronizedImages(
 
 bool VisualGlobalLocalizationNode::processImages(
   const std::unordered_map<std::string,
-  std::shared_ptr<ImageType>> & images, rclcpp::Time & timestamp,
+  ImageType> & images, rclcpp::Time & timestamp,
   isaac::common::transform::SE3TransformD & localization_pose)
 {
   // Initialize the image rectifier
@@ -471,9 +477,7 @@ bool VisualGlobalLocalizationNode::processImages(
   }
 
   // Use the timestamp of the first image
-  timestamp = rclcpp::Time(
-    images.begin()->second->timestamp_sec,
-    images.begin()->second->timestamp_nsec, RCL_ROS_TIME);
+  timestamp = rclcpp::Time(images.begin()->second->header.stamp, RCL_ROS_TIME);
 
   // Set the camera images
   std::vector<isaac::visual::cuvgl::CameraImage> camera_images;
@@ -503,11 +507,13 @@ bool VisualGlobalLocalizationNode::processImages(
   std::vector<isaac::common::transform::SE3TransformD> initial_world_T_cameras;
   if (use_initial_guess_ && !bootstrap_localization_) {
     INFO_STREAM(verbose_logging_, "Querying direct camera to map transform");
-    for (const auto & image: images) {
+    for (const auto & image : images) {
       const std::string frame_id = image.first;
       // Directly query the current map→camera transform instead of complex odometry prediction
       Transform map_T_camera_eigen;
-      if (transform_manager_.lookupTransformTf(map_frame_, frame_id, timestamp, &map_T_camera_eigen)) {
+      if (transform_manager_.lookupTransformTf(
+          map_frame_, frame_id, timestamp, &map_T_camera_eigen))
+      {
         isaac::common::transform::SE3TransformD map_T_camera;
         convertEigenToTransform(map_T_camera_eigen, map_T_camera);
         initial_world_T_cameras.emplace_back(map_T_camera);
@@ -535,8 +541,10 @@ bool VisualGlobalLocalizationNode::processImages(
 
   const auto status = cuvgl_->Localize(camera_images, localization_pose);
 
-  RCLCPP_INFO_STREAM(get_logger(), "Localization completed with status: " << status.ok()
-                     << ", vgl_enable_debug_: " << vgl_enable_debug_);
+  RCLCPP_INFO_STREAM(
+    get_logger(), "Localization completed with status: " << status.ok()
+                                                         << ", vgl_enable_debug_: "
+                                                         << vgl_enable_debug_);
 
   // If debug mode is enabled, publish the debug image
   if (vgl_enable_debug_) {
@@ -546,7 +554,9 @@ bool VisualGlobalLocalizationNode::processImages(
     if (!debug_status.ok()) {
       RCLCPP_WARN_STREAM(get_logger(), "Failed to get debug images: " << debug_status.message());
     } else {
-      RCLCPP_INFO_STREAM(get_logger(), "Got debug image, size: " << debug_image.rows << "x" << debug_image.cols);
+      RCLCPP_INFO_STREAM(
+        get_logger(),
+        "Got debug image, size: " << debug_image.rows << "x" << debug_image.cols);
     }
     if (!debug_image.empty()) {
       RCLCPP_INFO_STREAM(get_logger(), "Publishing debug image...");
@@ -587,7 +597,7 @@ bool VisualGlobalLocalizationNode::processImages(
 }
 
 void VisualGlobalLocalizationNode::inputImageCallback(
-  const ImageType::ConstSharedPtr & image_msg,
+  const ImageType & image_msg,
   camera_params_id_t camera_id)
 {
   if (!trigger_localization_) {
@@ -597,13 +607,13 @@ void VisualGlobalLocalizationNode::inputImageCallback(
     return;
   }
 
-  const rclcpp::Time timestamp = rclcpp::Time(
-    image_msg->timestamp_sec, image_msg->timestamp_nsec, RCL_ROS_TIME);
+  const rclcpp::Time timestamp(image_msg->header.stamp, RCL_ROS_TIME);
   INFO_STREAM(
     verbose_logging_,
     "[" << std::this_thread::get_id() << "] inputImageCallback " << camera_id << ", sec: "
-        << std::fixed << std::setprecision(3) << (double)timestamp.nanoseconds() / 1e9);
-  sync_->AddMessage(camera_id, timestamp.nanoseconds(), *image_msg, true /* trigger callback */);
+        << std::fixed << std::setprecision(3) <<
+      static_cast<double>(timestamp.nanoseconds()) / 1e9);
+  sync_->AddMessage(camera_id, timestamp.nanoseconds(), image_msg, true /* trigger callback */);
 }
 
 nvidia::isaac::common::image::MonoCameraCalibrationParams VisualGlobalLocalizationNode::
@@ -657,16 +667,16 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
   }
 
   if (enable_rectify_images_) {
-    // TODO: there seems still a bug, somehow need to move rectifier initialization to camera-info callback,
-    // or add copy constructor to MonoCameraCalibrationParams to get correct camera-params (but the unit test
-    // passes w/ or wo/ the copy constructor).
+    // TODO(isaac_ros): there seems still a bug, somehow need to move rectifier initialization to
+    // camera-info callback, or add copy constructor to MonoCameraCalibrationParams to get
+    // correct camera-params (but the unit test passes w/ or wo/ the copy constructor).
     auto image_rectifier = std::make_unique<nvidia::isaac::common::image::ImageRectifier>();
     if (!image_rectifier->Init(params)) {
       RCLCPP_ERROR_STREAM(
         get_logger(),
         "Failed to initialize image rectifier for " << frame_id);
       return;
-    }else{
+    } else {
       RCLCPP_INFO_STREAM(get_logger(), "Image rectifier initialized for " << frame_id);
     }
 
@@ -697,7 +707,8 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
   protos::common::sensor::CameraSensor sensors;
   sensors.mutable_calibration_parameters()->CopyFrom(params.ToProto());
   // Rectified images are undistorted, so use PINHOLE model
-  sensors.set_camera_projection_model_type(protos::common::sensor::CameraProjectionModelType::PINHOLE);
+  sensors.set_camera_projection_model_type(
+    protos::common::sensor::CameraProjectionModelType::PINHOLE);
 
   // cuvgl uses 3x3 projection matrix
   const auto status = cuvgl_->AddCamera(camera_id, baselink_T_camera, sensors);
@@ -713,9 +724,9 @@ void VisualGlobalLocalizationNode::inputCameraInfoCallback(
 
 bool VisualGlobalLocalizationNode::checkImageRectifier(
   const std::unordered_map<std::string,
-  std::shared_ptr<ImageType>> & images) const
+  ImageType> & images) const
 {
-  for (auto & [frame_id, image]: images) {
+  for (auto & [frame_id, image] : images) {
     if (image_rectifiers_.count(frame_id) == 0 || image_rectifiers_.at(frame_id) == nullptr) {
       return false;
     }
@@ -724,58 +735,58 @@ bool VisualGlobalLocalizationNode::checkImageRectifier(
 }
 
 bool VisualGlobalLocalizationNode::convertImageMessage(
-  const std::shared_ptr<ImageType> & image,
+  const ImageType & image,
   camera_params_id_t sensor_id,
   isaac::visual::cuvgl::CameraImage & camera_image)
 {
-  // Convert the NitrosImage to sensor_msgs::msg::Image
   sensor_msgs::msg::Image img_msg;
-  img_msg.header.frame_id = image->frame_id;
-  img_msg.header.stamp.sec = static_cast<int32_t>(image->timestamp_sec);
-  img_msg.header.stamp.nanosec = image->timestamp_nsec;
+  img_msg.header = image->header;
   img_msg.height = image->height;
   img_msg.width = image->width;
   img_msg.encoding = image->encoding;
+  img_msg.is_bigendian = image->is_bigendian;
   img_msg.step = image->step;
-  const size_t size_in_bytes = image->get_data_size();
+  const size_t size_in_bytes = image->data.size();
   img_msg.data.resize(size_in_bytes);
-  // Use stream and convert to Async ?
-  auto read_handle = image->get_read_handle(cuda_stream_);
-  if (cudaMemcpyAsync(img_msg.data.data(), read_handle.get_ptr(),
-                      size_in_bytes, cudaMemcpyDefault,
-                      cuda_stream_) != cudaSuccess)
+  auto read_handle = cuda_buffer_backend::from_input_buffer(image->data, *cuda_stream_);
+  if (cudaMemcpyAsync(
+      img_msg.data.data(), read_handle.get_ptr(),
+      size_in_bytes, cudaMemcpyDefault,
+      *cuda_stream_) != cudaSuccess)
   {
     RCLCPP_ERROR(get_logger(), "Failed to copy image data");
     return false;
   }
 
-  if (cudaStreamSynchronize(cuda_stream_) != cudaSuccess) {
+  if (cudaStreamSynchronize(*cuda_stream_) != cudaSuccess) {
     RCLCPP_ERROR(get_logger(), "Failed to synchronize stream");
     return false;
   }
 
-  // Note: the image is only support in RGB8/BGR8 format. Check CameraFrameToMat in camera_data_utils.cc
+  // Note: the image is only support in RGB8/BGR8 format. Check CameraFrameToMat in
+  // camera_data_utils.cc
   cv_bridge::CvImagePtr bgr_cv_ptr =
     cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
   if (enable_rectify_images_) {
-    if (image_rectifiers_[image->frame_id] == nullptr) {
+    if (image_rectifiers_[image->header.frame_id] == nullptr) {
       RCLCPP_ERROR(get_logger(), "Image rectifier is not initialized");
       return false;
     }
     // Rectify the image
     cv::Mat rectified_image;
-    image_rectifiers_[image->frame_id]->Rectify(bgr_cv_ptr->image, rectified_image);
+    image_rectifiers_[image->header.frame_id]->Rectify(bgr_cv_ptr->image, rectified_image);
     bgr_cv_ptr->image = rectified_image;
 
     if (publish_rectified_images_) {
       rectified_image_pubs_[sensor_id]->publish(*(bgr_cv_ptr->toImageMsg()));
-      rectified_camera_info_pubs_[sensor_id]->publish(rectified_camera_infos_[image->frame_id]);
+      rectified_camera_info_pubs_[sensor_id]->publish(
+        rectified_camera_infos_[image->header.frame_id]);
     }
   }
 
   camera_image.camera_params_id = sensor_id;
   camera_image.image = bgr_cv_ptr->image;
-  camera_image.timestamp_microseconds = GetImageTimestampInMicros(*image);
+  camera_image.timestamp_microseconds = GetImageTimestampInMicros(image);
   return true;
 }
 
@@ -824,21 +835,22 @@ void VisualGlobalLocalizationNode::publishMapToOdomTF(
     convertSE3ToRosTransform(map_T_odom, map_to_odom_msg.transform);
     tf_broadcaster_->sendTransform(map_to_odom_msg);
 
-    INFO_STREAM(verbose_logging_,
+    INFO_STREAM(
+      verbose_logging_,
       "Published map-to-odom transform: translation=["
-      << map_T_odom.translation().x() << ", "
-      << map_T_odom.translation().y() << ", "
-      << map_T_odom.translation().z() << "], rotation=["
-      << map_T_odom.rotation().w() << ", "
-      << map_T_odom.rotation().x() << ", "
-      << map_T_odom.rotation().y() << ", "
-      << map_T_odom.rotation().z() << "]");
+        << map_T_odom.translation().x() << ", "
+        << map_T_odom.translation().y() << ", "
+        << map_T_odom.translation().z() << "], rotation=["
+        << map_T_odom.rotation().w() << ", "
+        << map_T_odom.rotation().x() << ", "
+        << map_T_odom.rotation().y() << ", "
+        << map_T_odom.rotation().z() << "]");
 
   } else {
     RCLCPP_WARN_STREAM(
       get_logger(),
       "Could not get transform from " << odom_frame_ << " to " << base_frame_
-      << ". Skipping map-to-odom transform publication.");
+                                      << ". Skipping map-to-odom transform publication.");
   }
 }
 

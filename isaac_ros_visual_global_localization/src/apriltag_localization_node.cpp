@@ -16,7 +16,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "isaac_ros_visual_global_localization/apriltag_localization_node.hpp"
-#include "isaac_ros_visual_global_localization/constants.h"
+#include "isaac_ros_visual_global_localization/constants.hpp"
 #include "common/file_utils/file_utils.h"
 
 namespace nvidia
@@ -111,7 +111,6 @@ void AprilTagLocalizationNode::subscribeToTopics()
     input_slam_odometry_topic_, 10,
     std::bind(
       &TransformManager::odomCallback, &transform_manager_, std::placeholders::_1));
-
 }
 
 void AprilTagLocalizationNode::advertiseTopics()
@@ -147,7 +146,9 @@ void AprilTagLocalizationNode::AprilTagDetectionCallback(const AprilTagMsg::Shar
     return;
   }
   // Transform baselink_T_camera_;
-  if (!transform_manager_.lookupTransformToReferenceFrame(frame_id, timestamp, &baselink_T_camera_)) {
+  if (!transform_manager_.lookupTransformToReferenceFrame(
+      frame_id, timestamp, &baselink_T_camera_))
+  {
     RCLCPP_ERROR(get_logger(), "Failed to get transform for frame_id: %s", frame_id.c_str());
     return;
   }
@@ -167,7 +168,6 @@ void AprilTagLocalizationNode::AprilTagDetectionCallback(const AprilTagMsg::Shar
       RCLCPP_WARN(get_logger(), "Apriltag Localization Failed.");
     }
   }
-
 }
 
 bool AprilTagLocalizationNode::HandleRecording(const AprilTagMsg::SharedPtr msg)
@@ -202,18 +202,18 @@ bool AprilTagLocalizationNode::HandleLocalization(const AprilTagMsg::SharedPtr m
     map_T_odom_ = map_T_camera * (odom_T_baselink_ * baselink_T_camera_).inverse();
 
     if (debug_mode_) {
-      //visualize the detection
+      // visualize the detection
       visualization_msgs::msg::Marker detection_tag_marker;
       setMarker(best_observation.map_T_tag, detection_tag_marker);
       detection_tag_marker.ns = "detection";
-      //set green color for best detection tag
+      // set green color for best detection tag
       detection_tag_marker.color.g = 1.0f;
       detection_tag_pub_->publish(detection_tag_marker);
 
       visualization_msgs::msg::Marker visual_global_localization_marker;
       setMarker(map_T_camera, visual_global_localization_marker);
       visual_global_localization_marker.ns = "camera";
-      //set blue color for camera localization
+      // set blue color for camera localization
       visual_global_localization_marker.color.b = 1.0f;
       detection_tag_pub_->publish(visual_global_localization_marker);
     }
@@ -253,7 +253,6 @@ const AprilTagObservation AprilTagLocalizationNode::FindBestObservation(
     }
   }
   return *best_observation;
-
 }
 
 void AprilTagLocalizationNode::publishMessage(const rclcpp::Time & timestamp)
@@ -270,7 +269,6 @@ void AprilTagLocalizationNode::publishMessage(const rclcpp::Time & timestamp)
   pose_msg.header.frame_id = odom_frame_;
   convertEigenToRosPose(map_T_odom_, pose_msg.pose.pose);
   apriltag_localization_pub_->publish(pose_msg);
-
 }
 
 bool AprilTagLocalizationNode::saveObservationsToDisk()
@@ -406,9 +404,9 @@ void AprilTagLocalizationNode::setMarker(
   marker.lifetime = rclcpp::Duration::max();
 }
 
-} // namespace visual_global_localization
-} // namespace isaac_ros
-} // namespace nvidia
+}  // namespace visual_global_localization
+}  // namespace isaac_ros
+}  // namespace nvidia
 
 // Register as a component
 #include "rclcpp_components/register_node_macro.hpp"

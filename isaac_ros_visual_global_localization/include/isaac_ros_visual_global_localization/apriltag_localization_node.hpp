@@ -15,9 +15,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef ISAAC_ROS_CAMERA_LOCALIZATION_APRILTAG_LOCALIZATION_NODE_HPP_
-#define ISAAC_ROS_CAMERA_LOCALIZATION_APRILTAG_LOCALIZATION_NODE_HPP_
+#ifndef ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__APRILTAG_LOCALIZATION_NODE_HPP_
+#define ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__APRILTAG_LOCALIZATION_NODE_HPP_
 
+#include <tf2_ros/transform_broadcaster.h>
+
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -25,7 +28,6 @@
 
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <tf2_ros/transform_broadcaster.h>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
@@ -131,10 +133,9 @@ protected:
     const isaac_ros_apriltag_interfaces::msg::AprilTagDetection & tag_detection) const;
   // set the visualization marker for the tag
   void setMarker(const Transform & transform, visualization_msgs::msg::Marker & marker) const;
-
 };
-} // namespace visual_global_localization
-} // namespace isaac_ros
-} // namespace nvidia
+}  // namespace visual_global_localization
+}  // namespace isaac_ros
+}  // namespace nvidia
 
-#endif  // ISAAC_ROS_CAMERA_LOCALIZATION_APRILTAG_LOCALIZATION_NODE_HPP_
+#endif  // ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__APRILTAG_LOCALIZATION_NODE_HPP_

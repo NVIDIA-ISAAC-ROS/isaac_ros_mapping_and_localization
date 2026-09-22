@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_pointcloud_utils</name>
-  <version>4.6.0</version>
+  <version>5.0.0</version>
   <description>Isaac ROS Point Cloud Utilities.</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -33,10 +33,9 @@
 
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
-  <depend>isaac_ros_pointcloud_interfaces</depend>
-  <depend>isaac_ros_nitros_flat_scan_type</depend>
-  <depend>isaac_ros_nitros_point_cloud_type</depend>
   <depend>sensor_msgs</depend>
+  <depend>isaac_ros_pointcloud_interfaces</depend>
+  <depend>cuda_buffer</depend>
 
   <build_depend>isaac_ros_common</build_depend>
 

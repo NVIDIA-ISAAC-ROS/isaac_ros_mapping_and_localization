@@ -31,7 +31,7 @@
 #include "common/transform/se3_transform.h"
 #include "protos/visual/general/keyframe_metadata.pb.h"
 
-using namespace nvidia::isaac;
+namespace common = nvidia::isaac::common;
 
 DEFINE_string(
   output_pose_bag_file, "",
@@ -53,8 +53,7 @@ DEFINE_string(
   "[OPTIONAL] the header frame id of the output pose");
 
 const uint64_t kSecondsToNanoseconds = 1000000000;
-const std::string kTransformTopicName = "/tf";
-// const std::string kTransformMessageType = "tf2_msgs/msg/TFMessage";
+const char kTransformTopicName[] = "/tf";
 
 int main(int argc, char ** argv)
 {
@@ -147,7 +146,6 @@ int main(int argc, char ** argv)
       tf_msg.transform.rotation.z = qz;
       tf_msgs.transforms.emplace_back(tf_msg);
       writer.write(tf_msgs, kTransformTopicName, ros_time);
-
     }
   } catch (const std::exception & e) {
     LOG(ERROR) << "Failed to read tum file row: " << std::string(e.what());

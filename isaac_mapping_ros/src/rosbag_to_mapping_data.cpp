@@ -22,9 +22,10 @@
 #include <functional>
 #include <iostream>
 #include <memory>
-#include <opencv2/opencv.hpp>
 #include <string>
 #include <thread>
+
+#include <opencv2/opencv.hpp>
 
 #include "isaac_mapping_ros/data_converter_utils.hpp"
 
@@ -36,7 +37,8 @@
 #include "visual/utils/keyframe_edex_utils.h"
 #include "common/transform/pose_serializer.h"
 
-using namespace nvidia::isaac;
+namespace common = nvidia::isaac::common;
+namespace visual = nvidia::isaac::visual;
 using nvidia::isaac::common::file_utils::FileUtils;
 namespace ConverterUtil =
   isaac_ros::isaac_mapping_ros::data_converter_utils;
@@ -125,7 +127,8 @@ bool WriteImage(
       bool is_depth_image = image_frame.is_depth_image;
 
       // Also check if we can get this information from the metadata
-      // This would require passing the metadata to this function, but for now we'll use the camera name
+      // This would require passing the metadata to this function, but for now we'll use the
+      // camera name
 
       if (is_depth_image) {
         // For depth images, write as uint16 PNG without normalization
@@ -172,7 +175,8 @@ bool WriteImage(
     }
   }
 
-  // Depth image does not need to be added to the metadata collection as we assume it's synced with the color image
+  // Depth image does not need to be added to the metadata collection as we assume it's synced
+  // with the color image
   if (image_frame.is_depth_image) {
     return true;
   }
@@ -202,7 +206,6 @@ void AddStereoPair(
   isaac_ros::isaac_mapping_ros::CameraMetadata> & camera_name_to_camera_metadata,
   protos::visual::general::KeyframesMetadataCollection & metadata_collection)
 {
-
   const float kNonBaselineEps = 0.001;
   const float kMinBaselineThreshold = 0.01;  // 1 cm
 
@@ -236,7 +239,6 @@ void AddStereoPair(
         std::fabs(relative_pose.translation().z()) > kNonBaselineEps ||
         std::fabs(relative_pose.translation().x()) < kMinBaselineThreshold)
       {
-
         LOG(WARNING) << "Input stereo pair: [" << camera_name << "," <<
           camera_metadata.get_paired_camera_name() << ": has invalid transform:" <<
           relative_pose.ToString();
@@ -266,10 +268,12 @@ void ExtractFromRosBag()
   // When --rectify_images=False, ensure camera metadata reflects that images will be raw
   // so that distortion coefficients are preserved for BROWN model in EDEX files
   if (!FLAGS_rectify_images) {
-    LOG(INFO) << "rectify_images=false: configuring cameras for raw image processing with distortion preservation";
+    LOG(INFO) << "rectify_images=false: configuring cameras for raw image processing "
+              << "with distortion preservation";
     for (auto & [camera_name, camera_metadata] : camera_name_to_camera_metadata) {
-      if (camera_metadata.get_is_camera_rectified()){
-        LOG(WARNING) << "User selected to skip rectification, but camera " << camera_name << " is already rectified";
+      if (camera_metadata.get_is_camera_rectified()) {
+        LOG(WARNING) << "User selected to skip rectification, but camera " << camera_name <<
+          " is already rectified";
       }
     }
   }
@@ -303,7 +307,8 @@ void ExtractFromRosBag()
         pose_interpolator)) << "Failed to read pose from file: " << FLAGS_tum_pose_file;
   } else if (!FLAGS_reference_pose_frame.empty() && !FLAGS_base_link_name.empty()) {
     // Use reference_pose_frame to base_link transforms from TF messages in the sensor bag
-    LOG(INFO) << "Using reference pose frame to base_link transforms from TF for pose interpolation";
+    LOG(INFO) << "Using reference pose frame to base_link transforms from TF for pose "
+              << "interpolation";
     pose_interpolator = ConverterUtil::ExtractPoseInterpolatorFromTF(
       FLAGS_sensor_data_bag_file,
       FLAGS_reference_pose_frame,
@@ -400,15 +405,18 @@ void ExtractFromRosBag()
     LOG(INFO) << "Converting edex files";
     std::string frames_meta_str;
     std::string stereo_edx_str;
+    std::string depth_path_prefix;
 
     // Extract frames metadata
-    frames_meta_str = visual::utils::ExtractFramesMeta(metadata_collection);
+    frames_meta_str =
+      visual::utils::ExtractFramesMeta(metadata_collection, depth_path_prefix);
 
     // Extract stereo edx - BROWN distortion params are automatically populated
     // when camera model is PINHOLE and distortion coefficients are present
     stereo_edx_str = visual::utils::ExtractStereoEdex(
       metadata_collection,
-      frames_meta_str);
+      frames_meta_str,
+      depth_path_prefix);
 
     std::string frame_meta_file = FileUtils::JoinPath(
       FLAGS_output_folder_path,
@@ -451,10 +459,11 @@ int main(int argc, char ** argv)
   ConverterUtil::CheckBagExists(FLAGS_sensor_data_bag_file);
   if (!FLAGS_pose_bag_file.empty()) {
     ConverterUtil::CheckBagExists(FLAGS_pose_bag_file);
-  } else {
+  } else if (FLAGS_tum_pose_file.empty() && FLAGS_reference_pose_frame.empty()) {
     if (FLAGS_min_inter_frame_distance > 0 || FLAGS_min_inter_frame_rotation_degrees > 0) {
       LOG(ERROR) <<
-        "--pose_bag_file is not provided, ignore --min_inter_frame_distance and --min_inter_frame_rotation_degrees";
+        "No pose source provided, ignore --min_inter_frame_distance and "
+        "--min_inter_frame_rotation_degrees";
     }
   }
 
@@ -475,7 +484,8 @@ int main(int argc, char ** argv)
         "Please provide --reference_pose_frame when --do_motion_compensate is true";
       CHECK(!FLAGS_base_link_name.empty()) <<
         "Please provide --base_link_name when --do_motion_compensate is true";
-      LOG(INFO) << "Motion compensation will be applied using reference pose frame: " << FLAGS_reference_pose_frame;
+      LOG(INFO) << "Motion compensation will be applied using reference pose frame: "
+                << FLAGS_reference_pose_frame;
     }
   }
 

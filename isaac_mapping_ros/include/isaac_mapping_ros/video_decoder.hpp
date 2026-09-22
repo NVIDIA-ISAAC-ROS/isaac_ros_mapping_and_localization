@@ -15,6 +15,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+#pragma once
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -22,11 +24,13 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#include <opencv2/opencv.hpp>
+#include <glog/logging.h>
+
 #include <iostream>
+#include <string>
 #include <vector>
 
-#include <glog/logging.h>
+#include <opencv2/opencv.hpp>
 
 
 namespace isaac_ros
@@ -57,5 +61,5 @@ private:
   bool AVFrameToCVMat(AVFrame * frame, cv::Mat & mat);
 };
 
-}
-}
+}  // namespace isaac_mapping_ros
+}  // namespace isaac_ros
