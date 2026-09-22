@@ -17,8 +17,8 @@
 
 // (TODO)Copy this class from isaac_ros_nvblox
 
-#ifndef ISAAC_ROS_CAMERA_LOCALIZATION_TRANSFORM_MANAGER_HPP_
-#define ISAAC_ROS_CAMERA_LOCALIZATION_TRANSFORM_MANAGER_HPP_
+#ifndef ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__TRANSFORM_MANAGER_HPP_
+#define ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__TRANSFORM_MANAGER_HPP_
 
 #include <map>
 #include <memory>
@@ -35,7 +35,7 @@
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 
-#include "constants.h"
+#include "isaac_ros_visual_global_localization/constants.hpp"
 #include "protos/common/geometry/transform.pb.h"
 #include "common/transform/se3_transform.h"
 
@@ -206,4 +206,4 @@ void convertProtoToTransform(
 }  // namespace isaac_ros
 }  // namespace nvidia
 
-#endif  // ISAAC_ROS_CAMERA_LOCALIZATION_TRANSFORM_MANAGER_HPP_
+#endif  // ISAAC_ROS_VISUAL_GLOBAL_LOCALIZATION__TRANSFORM_MANAGER_HPP_

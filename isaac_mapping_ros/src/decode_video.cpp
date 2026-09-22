@@ -35,7 +35,7 @@ DEFINE_string(
   output_folder_path, "",
   "[REQUIRED] The path to the converted folder");
 
-const std::string kImageMessageType = "sensor_msgs/msg/CompressedImage";
+const char kImageMessageType[] = "sensor_msgs/msg/CompressedImage";
 
 
 int main(int argc, char ** argv)

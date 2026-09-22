@@ -43,7 +43,7 @@ import rosbag2_py
 
 ROS_WS = pathlib.Path(os.environ.get('ISAAC_ROS_WS'))
 VISUAL_MAPPING_PACKAGE_NAME = 'isaac_ros_visual_mapping'
-VISUAL_SLAM_PACKAGE_NAME = 'isaac_ros_visual_slam'
+CUVSLAM_PACKAGE_NAME = 'isaac_ros_cuvslam'
 ISAAC_MAPPING_ROS_PACKAGE_NAME = 'isaac_mapping_ros'
 
 
@@ -56,8 +56,8 @@ def get_isaac_ros_visual_mapping_package_path() -> pathlib.Path:
     return pathlib.Path(packages.get_package_prefix(VISUAL_MAPPING_PACKAGE_NAME))
 
 
-def get_isaac_ros_visual_slam_package_path() -> pathlib.Path:
-    return pathlib.Path(packages.get_package_prefix(VISUAL_SLAM_PACKAGE_NAME))
+def get_isaac_ros_cuvslam_package_path() -> pathlib.Path:
+    return pathlib.Path(packages.get_package_prefix(CUVSLAM_PACKAGE_NAME))
 
 
 def get_visual_mapping_config_dir() -> pathlib.Path:
@@ -243,7 +243,7 @@ def main():
     if sensor_bag_required and args.sensor_data_bag is None:
         raise ValueError(
             "sensor_data_bag is required when running 'edex' step or when --map_dir is not "
-            "provided. Either provide --sensor_data_bag or specify --map_dir with steps that "
+            'provided. Either provide --sensor_data_bag or specify --map_dir with steps that '
             "don't include 'edex'.")
 
     # Load map creation configuration
@@ -351,7 +351,7 @@ def main():
 
     if not map_frames_rectified_dir.exists():
         raise RuntimeError(
-            f"Cannot run depth step: Depth directory {map_frames_rectified_dir} does not exist. "
+            f'Cannot run depth step: Depth directory {map_frames_rectified_dir} does not exist. '
             f"Run 'compute_poses' step first.")
 
     num_map_frames = count_image_files(map_frames_rectified_dir)
@@ -452,7 +452,7 @@ def run_cuvslam_api_launcher(edex_path: pathlib.Path,
                              use_raw_image: bool = True,
                              use_cuvslam_opencv_compat: bool = True,
                              mnemonic: str = 'Run cuvslam_api_launcher'):
-    additional_path = get_isaac_ros_visual_slam_package_path() / 'lib'
+    additional_path = get_isaac_ros_cuvslam_package_path() / 'lib'
     ld_library_path = os.environ.get('LD_LIBRARY_PATH', '')
     os.environ['LD_LIBRARY_PATH'] = (
         f'{ld_library_path}:{additional_path}' if ld_library_path else str(additional_path)
@@ -476,7 +476,7 @@ def run_cuvslam_api_launcher(edex_path: pathlib.Path,
     base_command = [
         'ros2',
         'run',
-        'isaac_ros_visual_slam',
+        CUVSLAM_PACKAGE_NAME,
         'cuvslam_api_launcher',
         f'--dataset={launcher_edex_path}',
         f'--output_map={output_map_dir}',
@@ -506,9 +506,9 @@ def create_cuvslam_map(
     use_cuvslam_opencv_compat: bool = True,
 ):
     if not map_config:
-        raise ValueError("map_config is required")
+        raise ValueError('map_config is required')
     if not map_config.get('cuvslam'):
-        raise ValueError("cuvslam config is required")
+        raise ValueError('cuvslam config is required')
     cuvslam_config = map_config.get('cuvslam', {})
     vslam_run_pose_dir = output_cuvslam_poses_dir / 'runs'
     vslam_run_pose_dir.mkdir(parents=True, exist_ok=True)
@@ -523,9 +523,9 @@ def create_cuvslam_map(
                              use_cuvslam_opencv_compat=use_cuvslam_opencv_compat,
                              mnemonic='Create cuVSLAM map with cuvslam_api_launcher')
     repeat_count = cuvslam_config.get('repeat', 1)
-    print(f"Checking repeat count: {repeat_count}")
+    print(f'Checking repeat count: {repeat_count}')
     if repeat_count > 1:
-        print(f"Processing repeated poses for {repeat_count} runs...")
+        print(f'Processing repeated poses for {repeat_count} runs...')
         process_repeated_poses(
             edex_path,
             vslam_run_pose_dir,
@@ -538,7 +538,7 @@ def create_cuvslam_map(
         for file in vslam_run_pose_dir.iterdir():
             if file.is_file() and not file.name.startswith('.'):
                 shutil.copy2(file, output_cuvslam_poses_dir / file.name)
-        print(f"Repeat count is 1, copied VSLAM run poses to {output_cuvslam_poses_dir}")
+        print(f'Repeat count is 1, copied VSLAM run poses to {output_cuvslam_poses_dir}')
 
 
 def select_map_frames(input_frames_meta_file: pathlib.Path, output_frames_meta_file: pathlib.Path,
@@ -625,16 +625,16 @@ def run_depth_inference(color_img_dir: pathlib.Path,
     # Validate required directories and files exist
     if not color_img_dir.exists():
         raise RuntimeError(
-            f"Cannot run depth inference: Image directory {color_img_dir} does not exist. "
+            f'Cannot run depth inference: Image directory {color_img_dir} does not exist. '
             f"Run 'edex' and 'compute_poses' steps first.")
 
     num_images = count_image_files(color_img_dir)
     if num_images == 0:
-        raise RuntimeError(f"Cannot run depth inference: No images found in {color_img_dir}.")
+        raise RuntimeError(f'Cannot run depth inference: No images found in {color_img_dir}.')
 
     if not frames_meta_file.exists():
         raise RuntimeError(
-            f"Cannot run depth inference: Metadata file {frames_meta_file} does not exist. "
+            f'Cannot run depth inference: Metadata file {frames_meta_file} does not exist. '
             f"Run 'compute_poses' step first.")
 
     # Determine script and model resolution based on depth_model
@@ -649,7 +649,7 @@ def run_depth_inference(color_img_dir: pathlib.Path,
         log_file = 'run_foundationstereo_inference.log'
         model_res = fs_model_res
     else:
-        raise ValueError(f"Invalid depth_model: {depth_model}")
+        raise ValueError(f'Invalid depth_model: {depth_model}')
 
     command = [
         'ros2',
@@ -678,17 +678,17 @@ def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
     # Validate required directories and files exist
     if not color_img_dir.exists():
         raise RuntimeError(
-            f"Cannot create occupancy map: Image directory {color_img_dir} does not exist. "
+            f'Cannot create occupancy map: Image directory {color_img_dir} does not exist. '
             f"Run 'edex' and 'compute_poses' steps first.")
 
     if not depth_img_dir.exists():
         raise RuntimeError(
-            f"Cannot create occupancy map: Depth directory {depth_img_dir} does not exist. "
+            f'Cannot create occupancy map: Depth directory {depth_img_dir} does not exist. '
             f"Run 'depth' step first.")
 
     if not frames_meta_file.exists():
         raise RuntimeError(
-            f"Cannot create occupancy map: Metadata file {frames_meta_file} does not exist. "
+            f'Cannot create occupancy map: Metadata file {frames_meta_file} does not exist. '
             f"Run 'compute_poses' step first.")
 
     occupancy_nvblox_config = dict(nvblox_config)
@@ -704,13 +704,13 @@ def create_occupancy_map(output_dir: pathlib.Path, color_img_dir: pathlib.Path,
         occupancy_nvblox_config['ground_points_candidates_min_z_m'] += min_z
         occupancy_nvblox_config['workspace_bounds_min_height_m'] += min_z
         occupancy_nvblox_config['workspace_bounds_max_height_m'] += max_z
-        print(f"Adjusted nvblox z bounds using optimized keyframe min/max z: {min_z} to {max_z}:")
+        print(f'Adjusted nvblox z bounds using optimized keyframe min/max z: {min_z} to {max_z}:')
         ground_points_min_z = occupancy_nvblox_config['ground_points_candidates_min_z_m']
         workspace_min_z = occupancy_nvblox_config['workspace_bounds_min_height_m']
         workspace_max_z = occupancy_nvblox_config['workspace_bounds_max_height_m']
-        print(f"  ground_points_candidates_min_z_m: {ground_points_min_z}")
-        print(f"  workspace_bounds_min_height_m: {workspace_min_z}")
-        print(f"  workspace_bounds_max_height_m: {workspace_max_z}")
+        print(f'  ground_points_candidates_min_z_m: {ground_points_min_z}')
+        print(f'  workspace_bounds_min_height_m: {workspace_min_z}')
+        print(f'  workspace_bounds_max_height_m: {workspace_max_z}')
 
     first_pass_nvblox_config = dict(occupancy_nvblox_config)
     first_pass_nvblox_config['experimental_use_ground_plane_estimation'] = True
@@ -795,7 +795,7 @@ def create_cuvgl_map(cuvgl_map_folder: pathlib.Path,
     # Validate required directory exists
     if not map_frames_image_dir.exists():
         raise RuntimeError(
-            f"Cannot create cuvgl map: Image directory {map_frames_image_dir} does not exist. "
+            f'Cannot create cuvgl map: Image directory {map_frames_image_dir} does not exist. '
             f"Run 'edex' and 'compute_poses' steps first.")
 
     binary_folder = get_visual_mapping_binary_dir()
@@ -829,7 +829,7 @@ def count_image_files(image_folder: pathlib.Path):
 
 
 def check_running_depth_inference(depth_model: str = 'ess'):
-    result = subprocess.run(["ros2", "node", "list"], capture_output=True, text=True, check=True)
+    result = subprocess.run(['ros2', 'node', 'list'], capture_output=True, text=True, check=True)
     active_nodes = result.stdout.splitlines()
 
     if depth_model == 'foundationstereo':
@@ -851,12 +851,12 @@ def transform_cusfm_map(cusfm_map_dir: pathlib.Path, map_folder: pathlib.Path,
                         log_folder: pathlib.Path, print_mode: str):
     transform_file = map_folder / 'T_world_to_z0.json'
     if not transform_file.exists():
-        print(f"Warning: T_world_to_z0.json not found at {transform_file}")
-        print("Skipping kpmap transformation - occupancy mapping may not have been run yet")
-        print("The kpmap will remain in its original coordinate frame")
+        print(f'Warning: T_world_to_z0.json not found at {transform_file}')
+        print('Skipping kpmap transformation - occupancy mapping may not have been run yet')
+        print('The kpmap will remain in its original coordinate frame')
         return
-    print(f"Found occupancy transform file: {transform_file}")
-    print("Transforming kpmap to align with occupancy map coordinate frame...")
+    print(f'Found occupancy transform file: {transform_file}')
+    print('Transforming kpmap to align with occupancy map coordinate frame...')
     transformed_kpmap_dir = map_folder / 'cusfm_map'
     subprocess_utils.run_command(
         mnemonic='Transform kpmap with occupancy coordinate alignment',
@@ -869,7 +869,7 @@ def transform_cusfm_map(cusfm_map_dir: pathlib.Path, map_folder: pathlib.Path,
         print_mode=print_mode,
         timeout=300,
     )
-    print("Successfully transformed kpmap and aligned with occupancy coordinate frame")
+    print('Successfully transformed kpmap and aligned with occupancy coordinate frame')
 
 
 def run_cusfm(rectified_images_dir: pathlib.Path, cusfm_base_dir: pathlib.Path,
@@ -946,7 +946,7 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
                        map_config: dict,
                        skip_final_cuvslam: bool = False,
                        use_cuvslam_opencv_compat: bool = True):
-    print("=== Starting CUSFM Workflow ===")
+    print('=== Starting CUSFM Workflow ===')
     cusfm_base_dir = output_folder / 'cusfm'
     initial_cuvslam_map_dir = cusfm_base_dir / 'cuvslam_map'
     initial_cuvslam_poses_dir = cusfm_base_dir / 'cuvslam_poses'
@@ -958,14 +958,14 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
         map_frames_initial_dir = map_frames_rectified_dir
     map_frames_initial_dir.mkdir(parents=True, exist_ok=True)
     map_config['cuvslam']['repeat'] = 1
-    print("Step 1: Running initial CUVSLAM")
+    print('Step 1: Running initial CUVSLAM')
     cuvslam_timeout = math.ceil(duration * 7)
     initial_cuvslam_map_dir.mkdir(parents=True, exist_ok=True)
     initial_cuvslam_poses_dir.mkdir(parents=True, exist_ok=True)
     create_cuvslam_map(edex_path, initial_cuvslam_map_dir, initial_cuvslam_poses_dir, log_folder,
                        print_mode, cuvslam_timeout, map_config, use_raw_image,
                        use_cuvslam_opencv_compat)
-    print("Step 2: Running map frames step")
+    print('Step 2: Running map frames step')
     cuvslam_odom_tum_file = initial_cuvslam_poses_dir / 'odom_poses.tum'
     cuvslam_kf_tum_file = initial_cuvslam_poses_dir / 'keyframe_pose.tum'
     cuvslam_kf_optimized_tum_file = initial_cuvslam_poses_dir / 'keyframe_pose_optimized.tum'
@@ -987,14 +987,14 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
         print_mode,
     )
     if use_raw_image:
-        print("Step 3: Generating rectified images")
+        print('Step 3: Generating rectified images')
         map_frames_rectified_dir = output_folder / 'map_frames' / 'rectified'
         run_rectify_images_offline(map_frames_initial_dir, map_frames_rectified_dir, log_folder,
                                    print_mode)
         map_frames_to_use = map_frames_rectified_dir
     else:
         map_frames_to_use = map_frames_initial_dir
-    print("Step 4: Running CUSFM")
+    print('Step 4: Running CUSFM')
     run_cusfm(map_frames_to_use, cusfm_base_dir, log_folder, print_mode)
     cusfm_poses_dir = cusfm_base_dir / 'output_poses'
     merged_pose_file = cusfm_poses_dir / 'merged_pose_file.tum'
@@ -1009,7 +1009,7 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
         log_folder,
         print_mode,
     )
-    print("Step 7: Generating fully optimized poses")
+    print('Step 7: Generating fully optimized poses')
     fully_optimized_pose_file = output_folder / 'poses' / 'fully_optimized_poses.tum'
     fully_optimized_pose_file.parent.mkdir(parents=True, exist_ok=True)
     optimize_vo_with_keyframe_pose(
@@ -1020,18 +1020,18 @@ def run_cusfm_workflow(edex_path: pathlib.Path,
         print_mode,
     )
     if skip_final_cuvslam:
-        print("Step 8: Skipping final CUVSLAM map creation (--skip_final_cuvslam enabled)")
+        print('Step 8: Skipping final CUVSLAM map creation (--skip_final_cuvslam enabled)')
     else:
-        print("Step 8: Final CUVSLAM with optimized poses not supported without pycuvslam")
-        print("Note: cuvslam_api_launcher does not support external pose constraints")
-    print("=== CUSFM Workflow Complete ===")
+        print('Step 8: Final CUVSLAM with optimized poses not supported without pycuvslam')
+        print('Note: cuvslam_api_launcher does not support external pose constraints')
+    print('=== CUSFM Workflow Complete ===')
 
 
 def run_standard_workflow(edex_path: pathlib.Path, output_folder: pathlib.Path,
                           log_folder: pathlib.Path, print_mode: str, duration: float,
                           use_raw_image: bool, map_config: dict,
                           use_cuvslam_opencv_compat: bool = True):
-    print("=== Starting Standard Workflow ===")
+    print('=== Starting Standard Workflow ===')
     output_cuvslam_map_dir = output_folder / 'cuvslam_map'
     output_cuvslam_poses_dir = output_folder / 'poses'
     cuvslam_timeout = math.ceil(duration * 7)
@@ -1079,7 +1079,7 @@ def run_standard_workflow(edex_path: pathlib.Path, output_folder: pathlib.Path,
             log_folder,
             print_mode,
         )
-    print("=== Standard Workflow Complete ===")
+    print('=== Standard Workflow Complete ===')
 
 
 def process_repeated_poses(

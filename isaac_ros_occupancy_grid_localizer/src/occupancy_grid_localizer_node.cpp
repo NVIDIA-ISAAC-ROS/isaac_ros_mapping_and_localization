@@ -25,7 +25,7 @@
 
 #include "isaac_ros_common/qos.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
-#include "tf2/exceptions.h"
+#include "tf2/exceptions.hpp"
 
 namespace fs = std::filesystem;
 
@@ -110,12 +110,12 @@ OccupancyGridLocalizerNode::OccupancyGridLocalizerNode(const rclcpp::NodeOptions
     "localization_result", output_qos);
 
   buffered_flat_scan_subscriber_ =
-    create_subscription<nvidia::isaac_ros::nitros::NitrosFlatScan>(
+    create_subscription<isaac_ros_pointcloud_interfaces::msg::FlatScan>(
     "flatscan", input_qos,
     std::bind(&OccupancyGridLocalizerNode::BufferedFlatScanCallback, this, std::placeholders::_1));
 
   trigger_flat_scan_subscriber_ =
-    create_subscription<nvidia::isaac_ros::nitros::NitrosFlatScan>(
+    create_subscription<isaac_ros_pointcloud_interfaces::msg::FlatScan>(
     "flatscan_localization", input_qos,
     std::bind(&OccupancyGridLocalizerNode::TriggerFlatScanCallback, this, std::placeholders::_1));
 
@@ -156,30 +156,24 @@ void OccupancyGridLocalizerNode::GridSearchLocalizationCallback(
 }
 
 void OccupancyGridLocalizerNode::BufferedFlatScanCallback(
-  const std::shared_ptr<const nvidia::isaac_ros::nitros::NitrosFlatScan> flat_scan)
+  const isaac_ros_pointcloud_interfaces::msg::FlatScan::ConstSharedPtr flat_scan)
 {
   HandleIncomingFlatScan(*flat_scan, trigger_localization_on_next_flatscan_.exchange(false));
 }
 
 void OccupancyGridLocalizerNode::TriggerFlatScanCallback(
-  const std::shared_ptr<const nvidia::isaac_ros::nitros::NitrosFlatScan> flat_scan)
+  const isaac_ros_pointcloud_interfaces::msg::FlatScan::ConstSharedPtr flat_scan)
 {
   HandleIncomingFlatScan(*flat_scan, true);
 }
 
 void OccupancyGridLocalizerNode::HandleIncomingFlatScan(
-  const nvidia::isaac_ros::nitros::NitrosFlatScan & flat_scan,
+  const isaac_ros_pointcloud_interfaces::msg::FlatScan & flat_scan,
   bool should_localize)
 {
-  using RosFlatScan = isaac_ros_pointcloud_interfaces::msg::FlatScan;
-  isaac_ros_pointcloud_interfaces::msg::FlatScan ros_flat_scan;
-  rclcpp::TypeAdapter<
-    nvidia::isaac_ros::nitros::NitrosFlatScan,
-    RosFlatScan>::convert_to_ros_message(flat_scan, ros_flat_scan);
-
   {
     std::lock_guard<std::mutex> lock(buffered_flat_scan_mutex_);
-    buffered_flat_scan_ = ros_flat_scan;
+    buffered_flat_scan_ = flat_scan;
     has_buffered_flat_scan_ = true;
   }
 
@@ -187,12 +181,12 @@ void OccupancyGridLocalizerNode::HandleIncomingFlatScan(
     return;
   }
 
-  const auto transform = LookupBaseLinkToLidarTransform(ros_flat_scan.header.frame_id);
+  const auto transform = LookupBaseLinkToLidarTransform(flat_scan.header.frame_id);
   const auto localization_result = localizer_.Localize(
-    ros_flat_scan, transform, loc_result_frame_);
+    flat_scan, transform, loc_result_frame_);
   if (!localization_result) {
     RCLCPP_WARN(get_logger(), "Localization failed for FlatScan in frame %s.",
-      ros_flat_scan.header.frame_id.c_str());
+      flat_scan.header.frame_id.c_str());
     return;
   }
 

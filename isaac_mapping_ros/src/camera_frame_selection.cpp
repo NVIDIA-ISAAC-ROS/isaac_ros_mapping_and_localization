@@ -29,7 +29,8 @@
 #include "visual/general/keyframe_metadata.h"
 #include "visual/utils/keyframe_utils.h"
 
-using namespace nvidia::isaac;
+namespace common = nvidia::isaac::common;
+namespace visual = nvidia::isaac::visual;
 
 namespace ConverterUtil =
   isaac_ros::isaac_mapping_ros::data_converter_utils;
@@ -100,7 +101,7 @@ int main(int argc, char ** argv)
 
   std::vector<std::vector<uint64_t>> all_camera_timestamps;
   std::vector<std::string> all_camera_names;
-  for (const auto & camera_metadata: camera_metadata_map) {
+  for (const auto & camera_metadata : camera_metadata_map) {
     all_camera_timestamps.push_back(camera_metadata.second.timestamp_nanoseconds());
     all_camera_names.push_back(camera_metadata.first);
   }

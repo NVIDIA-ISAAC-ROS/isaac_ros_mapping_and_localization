@@ -27,6 +27,8 @@ find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
 find_package(OpenCV REQUIRED)
+find_package(Eigen3 REQUIRED NO_MODULE)
+find_package(Protobuf REQUIRED)
 find_package(urdf REQUIRED)
 find_package(gflags REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -50,7 +52,7 @@ target_include_directories(data_converter_utils PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(data_converter_utils video_decoder yaml-cpp)
+target_link_libraries(data_converter_utils video_decoder yaml-cpp Eigen3::Eigen protobuf::libprotobuf)
 ament_target_dependencies(data_converter_utils nav_msgs urdf OpenCV rosbag2_cpp sensor_msgs tf2_ros cv_bridge isaac_ros_visual_mapping)
 
 # rosbag_to_mapping_data binary
@@ -98,7 +100,7 @@ set_target_properties(decode_video PROPERTIES
 # select_frames_meta binary
 ament_auto_add_executable(select_frames_meta src/select_frames_meta.cpp)
 ament_target_dependencies(select_frames_meta isaac_ros_visual_mapping)
-target_link_libraries(select_frames_meta gflags)
+target_link_libraries(select_frames_meta gflags protobuf::libprotobuf)
 set_target_properties(select_frames_meta PROPERTIES
   BUILD_WITH_INSTALL_RPATH TRUE
   BUILD_RPATH_USE_ORIGIN TRUE

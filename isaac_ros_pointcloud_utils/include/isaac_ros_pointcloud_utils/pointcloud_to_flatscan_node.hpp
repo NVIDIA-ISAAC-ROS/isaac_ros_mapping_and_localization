@@ -25,9 +25,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 
-#include "isaac_ros_nitros/types/cuda_memory_pool.hpp"
-#include "isaac_ros_nitros_flat_scan_type/nitros_flat_scan.hpp"
-#include "isaac_ros_nitros_point_cloud_type/nitros_point_cloud.hpp"
+#include "isaac_ros_pointcloud_interfaces/msg/flat_scan.hpp"
+#include "sensor_msgs/msg/point_cloud2.hpp"
 
 namespace nvidia
 {
@@ -47,7 +46,7 @@ public:
 
 private:
   void PointCloudCallback(
-    const nvidia::isaac_ros::nitros::NitrosPointCloud::ConstSharedPtr & point_cloud);
+    const sensor_msgs::msg::PointCloud2::ConstSharedPtr & point_cloud);
 
   const double min_x_;
   const double max_x_;
@@ -63,12 +62,10 @@ private:
   uint32_t * counter_device_{nullptr};
   uint8_t * scratch_device_{nullptr};
 
-  nvidia::isaac_ros::nitros::CUDAMemoryPool output_pool_;
-
   std::mutex tick_mutex_;
 
-  rclcpp::Subscription<nvidia::isaac_ros::nitros::NitrosPointCloud>::SharedPtr pc_sub_;
-  rclcpp::Publisher<nvidia::isaac_ros::nitros::NitrosFlatScan>::SharedPtr flatscan_pub_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_;
+  rclcpp::Publisher<isaac_ros_pointcloud_interfaces::msg::FlatScan>::SharedPtr flatscan_pub_;
 };
 
 }  // namespace pointcloud_utils

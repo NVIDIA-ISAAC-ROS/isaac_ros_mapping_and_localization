@@ -23,7 +23,8 @@
 #include "visual/utils/types.h"
 #include "protos/visual/general/keyframe_metadata.pb.h"
 
-using namespace nvidia::isaac;
+namespace common = nvidia::isaac::common;
+namespace visual = nvidia::isaac::visual;
 
 DEFINE_string(
   input_frames_meta_file, "", "[REQUIRED] The input frames meta file");

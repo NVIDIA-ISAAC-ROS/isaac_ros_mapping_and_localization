@@ -44,7 +44,8 @@ TransformManager::TransformManager(rclcpp::Node * node)
 
   // Init the transform listeners if we ARE using TF at all.
   if (use_tf_transforms_) {
-    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node->get_clock(), tf2::Duration(std::chrono::seconds(60)));
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(
+      node->get_clock(), tf2::Duration(std::chrono::seconds(60)));
     transform_listener_ =
       std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
@@ -172,8 +173,8 @@ bool TransformManager::lookupTransformTf(
   } catch (tf2::TransformException & e) {
     RCLCPP_WARN_STREAM(
       node_->get_logger(),
-      "Failed to look up transform: from:" << source_frame << " to " << target_frame << ". Error: " <<
-        e.what());
+      "Failed to look up transform: from:" << source_frame << " to " << target_frame <<
+        ". Error: " << e.what());
     return false;
   }
 
@@ -244,13 +245,12 @@ bool TransformManager::lookupSensorTransform(
   }
 }
 
-//target frame: map, source frame: vehicle
+// target frame: map, source frame: vehicle
 Transform TransformManager::predictTransformByOdom(
   const std::string & target_frame,
   const std::string & source_frame,
   const rclcpp::Time & previous_timestamp, const rclcpp::Time & current_timestamp)
 {
-
   Transform target_frame_T_previous_source_frame;
   if (!lookupTransformTf(
       target_frame, source_frame, previous_timestamp,
@@ -262,7 +262,7 @@ Transform TransformManager::predictTransformByOdom(
       target_frame.c_str(), source_frame.c_str(), previous_timestamp.seconds());
     return Transform::Identity();
   }
-  //Get the transform from the previous time to the current time
+  // Get the transform from the previous time to the current time
   Transform odom_T_current_source_frame;
   if (!lookupTransformTf(
       KOdomFrame, source_frame, current_timestamp,
@@ -271,7 +271,7 @@ Transform TransformManager::predictTransformByOdom(
     RCLCPP_WARN(
       node_->get_logger(),
       "Could not find transform from %s to %s at time %f",
-      KOdomFrame.c_str(), source_frame.c_str(), current_timestamp.seconds());
+      KOdomFrame, source_frame.c_str(), current_timestamp.seconds());
     return Transform::Identity();
   }
   Transform odom_T_previous_source_frame;
@@ -282,7 +282,7 @@ Transform TransformManager::predictTransformByOdom(
     RCLCPP_WARN(
       node_->get_logger(),
       "Could not find transform from %s to %s at time %f",
-      KOdomFrame.c_str(), source_frame.c_str(), previous_timestamp.seconds());
+      KOdomFrame, source_frame.c_str(), previous_timestamp.seconds());
     return Transform::Identity();
   }
   const Transform previous_source_frame_T_current_source_frame =
@@ -291,7 +291,6 @@ Transform TransformManager::predictTransformByOdom(
   const Transform target_frame_T_current_source_frame = target_frame_T_previous_source_frame *
     previous_source_frame_T_current_source_frame;
   return target_frame_T_current_source_frame;
-
 }
 
 Transform TransformManager::transformToEigen(

@@ -62,7 +62,6 @@ void PointCloudFilterNode::subscribeToTopics()
     std::make_unique<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ =
     std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
 }
 
 void PointCloudFilterNode::advertiseTopics()
@@ -106,13 +105,13 @@ void PointCloudFilterNode::poseCallback(
       cloud_queue_.pop_front();
       RCLCPP_INFO(
         get_logger(),
-        "Time diff within threshold: %.2f, publish cloud at: %.2f, pose time: %.2f", time_diff, cloud_time,
-        pose_time);
+        "Time diff within threshold: %.2f, publish cloud at: %.2f, pose time: %.2f",
+        time_diff, cloud_time, pose_time);
     } else {
       RCLCPP_DEBUG(
         get_logger(),
-        "Pose is outdated, time-diff %.2f, cloud time: %.2f, pose time: %.2f", time_diff, cloud_time,
-        pose_time);
+        "Pose is outdated, time-diff %.2f, cloud time: %.2f, pose time: %.2f",
+        time_diff, cloud_time, pose_time);
       break;
     }
   }
@@ -139,10 +138,9 @@ bool PointCloudFilterNode::transformCloud(
   return true;
 }
 
-
-} // namespace visual_global_localization
-} // namespace isaac_ros
-} // namespace nvidia
+}  // namespace visual_global_localization
+}  // namespace isaac_ros
+}  // namespace nvidia
 
 // Register as a component
 #include "rclcpp_components/register_node_macro.hpp"

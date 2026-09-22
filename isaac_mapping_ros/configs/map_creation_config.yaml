@@ -37,7 +37,7 @@ cuvslam:
   cfg_planar: false # Slam poses are so that camera moves on horizontal plane (default: false)
   cfg_slam_max_map_size: 300 # Maximum numbers of poses in SLAM pose graph, 0 means unlimited
   cfg_sync_slam: true # Run localization and mapping in same thread with visual odometry
-  # Required for GetState() when SLAM is enabled (cuVSLAM 15+, nitros launcher)
+  # Required for GetState() when SLAM is enabled with cuVSLAM 15 or later
   cfg_enable_export: true
 
   # export

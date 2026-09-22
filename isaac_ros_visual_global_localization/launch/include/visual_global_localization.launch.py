@@ -15,10 +15,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import isaac_ros_launch_utils.all_types as lut
-import isaac_ros_launch_utils as lu
-import yaml
 import logging
+
+import isaac_ros_launch_utils as lu
+import isaac_ros_launch_utils.all_types as lut
+import yaml
 
 logger = logging.getLogger('visual_global_localization')
 
@@ -31,7 +32,7 @@ def generate_nova_carter_remapping(camera_names: list[str], use_raw_image: bool,
     camera_info_topic = 'camera_info' if use_raw_image else 'camera_info_rect'
 
     for stereo_camera in camera_names:
-        for sub_topic in ["left", "right"]:
+        for sub_topic in ['left', 'right']:
             remappings.append(
                 (f'{node_name}/image_{camera_id}', f'/{stereo_camera}/{sub_topic}/{image_topic}'))
             remappings.append((f'{node_name}/camera_info_{camera_id}',
@@ -42,18 +43,18 @@ def generate_nova_carter_remapping(camera_names: list[str], use_raw_image: bool,
 
 def generate_remap_from_config_file(topic_config_file: str,
                                     node_name: str) -> list[tuple[str, str]]:
-    with open(topic_config_file, "r", encoding="utf-8") as file:
+    with open(topic_config_file, 'r', encoding='utf-8') as file:
         config = yaml.safe_load(file)
     if 'stereo_cameras' not in config:
-        logger.error("No stereo cameras found in config file: %s", topic_config_file)
+        logger.error('No stereo cameras found in config file: %s', topic_config_file)
         return []
     camera_id = 0
     remapping = []
     for stereo_camera in config['stereo_cameras']:
-        for image_topic in ["left", "right"]:
-            info_topic = image_topic + "_camera_info"
+        for image_topic in ['left', 'right']:
+            info_topic = image_topic + '_camera_info'
             if image_topic not in stereo_camera or info_topic not in stereo_camera:
-                logger.error("Missing camera or camera_info topic for stereo camera: %s",
+                logger.error('Missing camera or camera_info topic for stereo camera: %s',
                              stereo_camera)
                 return []
             remapping.append((f'{node_name}/image_{camera_id}', stereo_camera[image_topic]))

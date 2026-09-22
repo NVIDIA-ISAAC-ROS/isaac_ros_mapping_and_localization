@@ -16,17 +16,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "isaac_mapping_ros/data_converter_utils.hpp"
-#include "isaac_mapping_ros/video_decoder.hpp"
+
+#include <glog/logging.h>
+#include <omp.h>
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <glog/logging.h>
-#include <omp.h>
-#include <nlohmann/json.hpp>
 
+#include <cv_bridge/cv_bridge.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/serialization.hpp>
 #include <rosbag2_cpp/reader.hpp>
@@ -36,12 +41,9 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/point_field.hpp>
-#include <nav_msgs/msg/path.hpp>
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
-#include <cv_bridge/cv_bridge.hpp>
-#include <yaml-cpp/yaml.h>
+
+#include "isaac_mapping_ros/video_decoder.hpp"
 
 #include "common/datetime/scoped_timer.h"
 #include "common/file_utils/file_utils.h"
@@ -102,8 +104,7 @@ std::vector<TopicInfo> ParseAllTopics(
     // Handle different topic structures:
     // 1. /xxxxx/camera_*/image/camera_info or /xxxxx/camera_*/right_image/camera_info
     // 2. /camera_*/image or /camera_*/camera_info
-    if (tokens.size() >= 4 && tokens[1].find("camera_") == 0)
-    {
+    if (tokens.size() >= 4 && tokens[1].find("camera_") == 0) {
       // New format: /xxxxx/camera_base_front/image/camera_info
       topic_info.camera_name_ = tokens[1];  // e.g., "camera_base_front"
       topic_info.sub_camera_name_ = tokens[2];  // e.g., "image" or "right_image"
@@ -153,16 +154,16 @@ std::vector<TopicInfo> ParseAllTopics(
   return parsed_topics;
 }
 
-const std::string kCompressedImageMessageType = "sensor_msgs/msg/CompressedImage";
-const std::string kRawImageMessageType = "sensor_msgs/msg/Image";
-const std::string kCameraInfoMessageType = "sensor_msgs/msg/CameraInfo";
-const std::string kOdometryMessageType = "nav_msgs/msg/Odometry";
-const std::string kPoseStampedMessageType = "geometry_msgs/msg/PoseStamped";
-const std::string kPoseWithCovarianceStampedMessageType =
+const char kCompressedImageMessageType[] = "sensor_msgs/msg/CompressedImage";
+const char kRawImageMessageType[] = "sensor_msgs/msg/Image";
+const char kCameraInfoMessageType[] = "sensor_msgs/msg/CameraInfo";
+const char kOdometryMessageType[] = "nav_msgs/msg/Odometry";
+const char kPoseStampedMessageType[] = "geometry_msgs/msg/PoseStamped";
+const char kPoseWithCovarianceStampedMessageType[] =
   "geometry_msgs/msg/PoseWithCovarianceStamped";
-const std::string kPathMessageType = "nav_msgs/msg/Path";
-const std::string kCameraOpticalSuffix = "_optical";
-const std::string kBagMetadataFile = "metadata.yaml";
+const char kPathMessageType[] = "nav_msgs/msg/Path";
+const char kCameraOpticalSuffix[] = "_optical";
+const char kBagMetadataFile[] = "metadata.yaml";
 
 std::unordered_map<std::string, data_converter_utils::PoseMessageType> poseMessageTypeMap = {
   {kOdometryMessageType, data_converter_utils::PoseMessageType::kOdometry},
@@ -259,8 +260,7 @@ std::string TopicNameToCameraName(const std::string & topic_name)
   // Handle different topic structures:
   // 1. /xxxxx/camera_*/image/camera_info or /xxxxx/camera_*/right_image/camera_info
   // 2. /camera_*/image or /camera_*/camera_info
-  if (tokens.size() >= 4 && tokens[1].find("camera_") == 0)
-  {
+  if (tokens.size() >= 4 && tokens[1].find("camera_") == 0) {
     // New format: /xxxxx/camera_base_front/image/camera_info
     camera_name = tokens[1];  // e.g., "camera_base_front"
   } else {
@@ -378,7 +378,7 @@ ConvertCameraParmsProto(const protos::common::sensor::MonoCalibrationParameters 
     ConvertMatrixProtoToMat(proto.camera_matrix(), params.camera_matrix_);
   } else {
     LOG(WARNING) << "Mono proto didn't specify camera_matrix, filling zeros";
-    params.camera_matrix_ = cv::Mat(3, 3, CV_64F, double(0));
+    params.camera_matrix_ = cv::Mat(3, 3, CV_64F, static_cast<double>(0));
   }
 
   if (proto.has_distortion_coefficients()) {
@@ -398,7 +398,7 @@ ConvertCameraParmsProto(const protos::common::sensor::MonoCalibrationParameters 
   } else {
     LOG(WARNING) <<
       "Mono proto didn't specify rectification_matrix, filling zeros";
-    params.rectification_matrix_ = cv::Mat(3, 3, CV_64F, double(0));
+    params.rectification_matrix_ = cv::Mat(3, 3, CV_64F, static_cast<double>(0));
   }
 
   if (proto.has_projection_matrix()) {
@@ -408,7 +408,7 @@ ConvertCameraParmsProto(const protos::common::sensor::MonoCalibrationParameters 
   } else {
     LOG(WARNING) <<
       "Mono proto didn't specify projection_matrix, filling zeros";
-    params.projection_matrix_ = cv::Mat(3, 4, CV_64F, double(0));
+    params.projection_matrix_ = cv::Mat(3, 4, CV_64F, static_cast<double>(0));
   }
 
   return params;
@@ -429,9 +429,10 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
   metadata->set_sensor_type(protos::common::sensor::SensorMetaData_SensorType_CAMERA);
   metadata->set_sensor_name(sensor_name);
 
-  // Camera driver usually publishes sensor_to_vehicle transform as raw_camera_frame to vehicle frame.
-  // If output_image_is rectified, either by driver, or by our converter, we need to apply the rectification
-  // matrix to change sensor_to_vehicle to rectified_camera_frame to vehicle frame.
+  // Camera driver usually publishes sensor_to_vehicle transform as raw_camera_frame to vehicle
+  // frame. If output_image_is rectified, either by driver, or by our converter, we need to apply
+  // the rectification matrix to change sensor_to_vehicle to rectified_camera_frame to vehicle
+  // frame.
   if (output_image_is_rectified) {
     // apply the rectification matrix rotation part to the sensor to vehicle transform
     // Map raw R (row-major) into an Eigen matrix then invert
@@ -443,7 +444,8 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
         Eigen::Quaterniond(R.inverse()));
       *metadata->mutable_sensor_to_vehicle_transform() =
         (sensor_to_vehicle_transform * rectified_camera_to_raw).ToProto();
-      LOG(INFO) << "Applied rectification matrix to sensor to vehicle transform for camera: " << sensor_name;
+      LOG(INFO) << "Applied rectification matrix to sensor to vehicle transform for camera: "
+                << sensor_name;
     } else {
       LOG(WARNING) <<
         "Rectification matrix is identity or zeros, "
@@ -453,7 +455,8 @@ protos::common::sensor::CameraSensor ConvertCameraInfoToSensor(
         sensor_to_vehicle_transform.ToProto();
     }
   } else {
-    // Use the original sensor to vehicle transform without rectification adjustments if we use raw images
+    // Use the original sensor to vehicle transform without rectification adjustments if we
+    // use raw images
     *metadata->mutable_sensor_to_vehicle_transform() =
       sensor_to_vehicle_transform.ToProto();
     LOG(INFO) << "Using original sensor to vehicle transform for camera: " << sensor_name;
@@ -617,16 +620,17 @@ bool data_converter_utils::GetFrameSyncAndPoseMap(
   std::map<uint64_t, uint64_t> & sample_id_to_synced_sample_id,
   std::map<uint64_t, nvidia::isaac::common::transform::SE3TransformD> & sample_id_to_pose)
 {
-
   if (all_timestamps_nanoseconds.empty()) {
     LOG(ERROR) << "Got empty all_timestamps_nanoseconds";
     return false;
   }
 
-  // If synced_timestamps_nanoseconds is empty, skip synced_sample_id population but still populate poses
+  // If synced_timestamps_nanoseconds is empty, skip synced_sample_id population but still
+  // populate poses
   if (synced_timestamps_nanoseconds.empty()) {
     LOG(INFO) <<
-      "Empty synced_timestamps_nanoseconds - skipping synced_sample_id population, only populating poses";
+      "Empty synced_timestamps_nanoseconds - skipping synced_sample_id population, "
+      "only populating poses";
     // Only populate poses, no synced_sample_id
     if (!pose_interpolator.timestamps().empty()) {
       for (size_t i = 0; i < all_timestamps_nanoseconds.size(); ++i) {
@@ -883,7 +887,6 @@ data_converter_utils::ExtractCameraSensors(
   data_converter_utils::CameraTopicConfig> & camera_info_topic_to_config,
   bool do_rectify_images)
 {
-
   auto clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
   tf2_ros::Buffer tf_buffer(clock);
 
@@ -954,11 +957,11 @@ std::map<std::string,
       final_camera_name += "_right";
     }
 
+    const bool needs_color_suffix = is_rgb_camera && !is_depth_camera &&
+      final_camera_name.find("_color") == std::string::npos;
     if (is_depth_camera && final_camera_name.find("_depth") == std::string::npos) {
       final_camera_name += "_depth";
-    } else if (is_rgb_camera && !is_depth_camera &&
-      final_camera_name.find("_color") == std::string::npos)
-    {
+    } else if (needs_color_suffix) {
       final_camera_name += "_color";
     }
 
@@ -981,7 +984,6 @@ std::map<std::string,
         candidate_topic.camera_name_ == topic_info.camera_name_ &&
         candidate_topic.sub_camera_name_ == topic_info.sub_camera_name_)
       {
-
         // For depth cameras, prefer topics with "depth" in the name
         if (is_depth_camera) {
           if (candidate_topic.is_depth_camera) {
@@ -1224,7 +1226,6 @@ bool data_converter_utils::ReadCameraTopicConfig(
       LOG(ERROR) << "No valid camera specified in file: " << topic_config_file;
       return false;
     }
-
   } catch (const YAML::Exception & e) {
     LOG(ERROR) << "Error parsing YAML file: " << e.what();
     return false;
@@ -1242,7 +1243,6 @@ data_converter_utils::ExtractCameraSensors(
   data_converter_utils::CameraTopicConfig> & camera_info_topic_to_config,
   bool do_rectify_images)
 {
-
   rosbag2_cpp::Reader reader;
   reader.open(sensor_data_bag);
 
@@ -1377,7 +1377,7 @@ struct CameraProcessingData
   std::mutex queue_mutex;
   std::condition_variable queue_cv;
   std::thread decoding_thread;
-  bool stop_decoding{false};
+  std::atomic<bool> stop_decoding{false};
 
   const size_t max_queue_size = 10;
   std::condition_variable queue_not_full_cv;
@@ -1387,10 +1387,10 @@ struct CameraProcessingData
 
 // Helper function to decode compressed image data
 bool DecodeCompressedImage(
-  const sensor_msgs::msg::CompressedImage& image,
-  CameraProcessingData& processing_data,
-  const std::string& camera_name,
-  cv::Mat& decoded_image)
+  const sensor_msgs::msg::CompressedImage & image,
+  CameraProcessingData & processing_data,
+  const std::string & camera_name,
+  cv::Mat & decoded_image)
 {
   // Check if the format is H.264 - only use decoder for H.264
   std::string format_lower = image.format;
@@ -1412,7 +1412,8 @@ bool DecodeCompressedImage(
     }
 
     if (frames.size() > 1) {
-      LOG(ERROR) << "total frames decoded from one message is larger than 1 for camera: " << camera_name;
+      LOG(ERROR) << "total frames decoded from one message is larger than 1 for camera: "
+                 << camera_name;
       return false;
     }
 
@@ -1421,7 +1422,8 @@ bool DecodeCompressedImage(
   } else {
     // Use OpenCV to decode all other formats (JPEG, PNG, etc.)
     nvidia::isaac::common::datetime::ScopedTimer timer("DecodeWithOpenCV");
-    decoded_image = cv::imdecode(image.data, cv::IMREAD_COLOR);
+    const std::vector<unsigned char> encoded_image(image.data.begin(), image.data.end());
+    decoded_image = cv::imdecode(encoded_image, cv::IMREAD_COLOR);
     if (decoded_image.empty()) {
       LOG(WARNING) << "Failed to decode image for camera: " << camera_name
                    << " (format: " << image.format << ")";
@@ -1448,10 +1450,10 @@ void DecodingThread(
       std::unique_lock<std::mutex> lock(processing_data.queue_mutex);
       processing_data.queue_cv.wait(
         lock, [&]() {
-          return !processing_data.frame_queue.empty() || processing_data.stop_decoding;
+          return !processing_data.frame_queue.empty() || processing_data.stop_decoding.load();
         });
 
-      if (processing_data.stop_decoding && processing_data.frame_queue.empty()) {
+      if (processing_data.stop_decoding.load() && processing_data.frame_queue.empty()) {
         break;
       }
 
@@ -1691,7 +1693,7 @@ bool data_converter_utils::ExtractCameraImagesFromRosbag(
       processing_data.queue_not_full_cv.wait(
         lock, [&]() {
           return processing_data.frame_queue.size() < processing_data.max_queue_size ||
-          processing_data.stop_decoding;
+                 processing_data.stop_decoding.load();
         });
       processing_data.frame_queue.push(msg);
     }
@@ -1700,7 +1702,7 @@ bool data_converter_utils::ExtractCameraImagesFromRosbag(
 
   // Stop all decoding threads and wait for them to finish
   for (auto & [camera_name, processing_data] : camera_name_to_processing_data) {
-    processing_data.stop_decoding = true;
+    processing_data.stop_decoding.store(true);
     processing_data.queue_cv.notify_one();
     if (processing_data.decoding_thread.joinable()) {
       processing_data.decoding_thread.join();
@@ -1804,8 +1806,8 @@ data_converter_utils::ExtractPosesFromBag(
         }
       case PoseMessageType::kPoseWithCovarianceStamped: {
           geometry_msgs::msg::PoseWithCovarianceStamped pose_with_covariance_stamped_msg;
-          rclcpp::Serialization<geometry_msgs::msg::PoseWithCovarianceStamped>().deserialize_message(
-            &serialized_msg, &pose_with_covariance_stamped_msg);
+          rclcpp::Serialization<geometry_msgs::msg::PoseWithCovarianceStamped>()
+          .deserialize_message(&serialized_msg, &pose_with_covariance_stamped_msg);
           set_transform(
             pose_with_covariance_stamped_msg.pose.pose.position,
             pose_with_covariance_stamped_msg.pose.pose.orientation);
@@ -1921,7 +1923,6 @@ data_converter_utils::ExtractPoseInterpolatorFromTF(
 
         pose_interpolator.AddNextPose(timestamp_microseconds, se3_transform);
         successful_queries++;
-
       } catch (const tf2::TransformException & ex) {
         failed_queries++;
         // Only log first few failures to avoid spam
@@ -1938,7 +1939,6 @@ data_converter_utils::ExtractPoseInterpolatorFromTF(
       LOG(WARNING) << "Failed to extract " << failed_queries <<
         " poses due to transform lookup failures";
     }
-
   } catch (const std::exception & e) {
     LOG(ERROR) << "Failed to extract pose interpolator from TF: " << e.what();
   }
@@ -2149,7 +2149,7 @@ bool data_converter_utils::ExtractImagesFromExtractedDir(
         return false;
       }
     }   // for each timestamp
-  } // for each camera name
+  }  // for each camera name
 
   return true;
 }
@@ -2200,7 +2200,6 @@ bool data_converter_utils::ExtractPointCloudsFromRosbag(
   bool do_motion_compensate,
   LidarMetadata & lidar_metadata)
 {
-
   nvidia::isaac::common::datetime::ScopedTimer timer("ExtractPointCloudsFromRosbag");
 
   // Create output folder if it doesn't exist
@@ -2248,8 +2247,10 @@ bool data_converter_utils::ExtractPointCloudsFromRosbag(
 
   if (do_motion_compensation) {
     LOG(INFO) <<
-      "Motion compensation enabled, will extract lidar frame to reference pose frame poses after determining lidar frame";
-    // Note: pose_interpolator will be populated after we determine the lidar frame from first message
+      "Motion compensation enabled, will extract lidar frame to reference pose frame poses "
+      "after determining lidar frame";
+    // Note: pose_interpolator will be populated after we determine the lidar frame from first
+    // message
   }
 
   // Initialize lidar metadata

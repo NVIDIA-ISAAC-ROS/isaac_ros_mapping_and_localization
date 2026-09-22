@@ -23,8 +23,8 @@ import isaac_ros_launch_utils.all_types as lut
 from launch.event_handlers import OnProcessExit
 
 # Remap image and camera info topics, we can modify this function to remap other topics if needed.
-MAP_FRAME = "map"
-OMAP_FRAME = "omap"
+MAP_FRAME = 'map'
+OMAP_FRAME = 'omap'
 
 
 def create_foxglove_topic_whitelist(camera_names: str) -> list[str]:
@@ -86,7 +86,6 @@ def create_rectify_node(name: str, identifier: str, args: lu.ArgumentContainer):
         parameters=[{
             'output_width': args.vgl_image_width,
             'output_height': args.vgl_image_height,
-            'type_negotiation_duration_s': 1,
         }],
         remappings=remappings,
     )
@@ -111,7 +110,6 @@ def create_format_converter_node(name: str, identifier: str, args: lu.ArgumentCo
         parameters=[{
             'image_width': args.vgl_image_width,
             'image_height': args.vgl_image_height,
-            'type_negotiation_duration_s': 1,
             'encoding_desired': args.desired_format,
         }],
         remappings=remappings)
@@ -161,21 +159,21 @@ def create_omap_to_map(map_to_omap_x_offset, map_to_omap_y_offset):
         executable='static_transform_publisher',
         name='static_transform_publisher',
         arguments=[
-            str(map_to_omap_x_offset),
-            str(map_to_omap_y_offset),
-            '0.0',
-            '0',
-            '0',
-            '0',
-            MAP_FRAME,
-            OMAP_FRAME,
+            '--x', str(map_to_omap_x_offset),
+            '--y', str(map_to_omap_y_offset),
+            '--z', '0.0',
+            '--roll', '0',
+            '--pitch', '0',
+            '--yaw', '0',
+            '--frame-id', MAP_FRAME,
+            '--child-frame-id', OMAP_FRAME,
         ],
     )
 
 
 def create_rviz():
     rviz_config_file = 'rviz/omap.rviz'
-    package_share_directory = get_package_share_directory("isaac_ros_visual_global_localization")
+    package_share_directory = get_package_share_directory('isaac_ros_visual_global_localization')
     rviz_config_path = os.path.join(package_share_directory, rviz_config_file)
 
     # Define the RViz node

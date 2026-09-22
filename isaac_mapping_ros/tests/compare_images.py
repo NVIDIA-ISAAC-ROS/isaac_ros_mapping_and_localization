@@ -17,8 +17,9 @@
 
 import argparse
 import sys
-from PIL import Image
+
 import numpy as np
+from PIL import Image
 
 
 def compare_images(image1_path, image2_path, pixel_threshold, diff_threshold):
@@ -27,7 +28,7 @@ def compare_images(image1_path, image2_path, pixel_threshold, diff_threshold):
         img1 = Image.open(image1_path)
         img2 = Image.open(image2_path)
     except IOError:
-        print("Error: Unable to open one or both images.", image1_path, image2_path)
+        print('Error: Unable to open one or both images.', image1_path, image2_path)
         sys.exit(1)
 
     # Convert images to numpy arrays
@@ -36,7 +37,7 @@ def compare_images(image1_path, image2_path, pixel_threshold, diff_threshold):
 
     # Check if images have the same dimensions
     if arr1.shape != arr2.shape:
-        print("Error: Images have different dimensions")
+        print('Error: Images have different dimensions')
         sys.exit(1)
 
     # Calculate the absolute difference between the images
@@ -47,43 +48,43 @@ def compare_images(image1_path, image2_path, pixel_threshold, diff_threshold):
 
     # Check if the number of different pixels exceeds the diff_threshold
     if diff_pixels > diff_threshold:
-        print(f"Failure: {diff_pixels} pixels differ more than the threshold")
+        print(f'Failure: {diff_pixels} pixels differ more than the threshold')
         sys.exit(1)
     else:
-        print(f"Success: {diff_pixels} pixels differ more than the threshold")
+        print(f'Success: {diff_pixels} pixels differ more than the threshold')
         sys.exit(0)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare two PNG images and exit with" +
-                                     " failure if the difference exceeds a threshold.", )
-    parser.add_argument("--image1", help="Path to the first PNG image")
-    parser.add_argument("--image2", help="Path to the second PNG image")
+    parser = argparse.ArgumentParser(description='Compare two PNG images and exit with' +
+                                     ' failure if the difference exceeds a threshold.', )
+    parser.add_argument('--image1', help='Path to the first PNG image')
+    parser.add_argument('--image2', help='Path to the second PNG image')
     parser.add_argument(
-        "--pixel_threshold",
+        '--pixel_threshold',
         type=int,
-        help="Threshold for pixel difference (0-255)",
+        help='Threshold for pixel difference (0-255)',
     )
     parser.add_argument(
-        "--diff_threshold",
+        '--diff_threshold',
         type=int,
-        help="Threshold for total number of differing pixels",
+        help='Threshold for total number of differing pixels',
     )
 
     args = parser.parse_args()
 
     # Validate pixel_threshold
     if args.pixel_threshold < 0 or args.pixel_threshold > 255:
-        print("Error: pixel_threshold must be between 0 and 255")
+        print('Error: pixel_threshold must be between 0 and 255')
         sys.exit(1)
 
     # Validate diff_threshold
     if args.diff_threshold < 0:
-        print("Error: diff_threshold must be a non-negative integer")
+        print('Error: diff_threshold must be a non-negative integer')
         sys.exit(1)
 
     compare_images(args.image1, args.image2, args.pixel_threshold, args.diff_threshold)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

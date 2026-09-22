@@ -119,7 +119,11 @@ def add_nodes(args: lu.ArgumentContainer):
             name='map_to_omap_static_transform_publisher',
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments=['0', '0', '0', '0', '0', '0', '1', 'map', 'omap'],
+            arguments=[
+                '--x', '0', '--y', '0', '--z', '0',
+                '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1',
+                '--frame-id', 'map', '--child-frame-id', 'omap',
+            ],
             output='screen',
         ))
         actions.append(lu.log_info('No ground plane file found, publishing identity transform'))
@@ -153,15 +157,10 @@ def generate_launch_description() -> lut.LaunchDescription:
     args.add_arg('vslam_enable_slam', False, cli=True)
     args.add_arg('enable_foxglove_bridge', True, cli=True)
     args.add_arg('use_foxglove_whitelist', True, cli=True)
-    args.add_arg('type_negotiation_duration_s', lu.get_default_negotiation_time(), cli=True)
 
     args.add_opaque_function(add_nodes)
 
     actions = args.get_launch_actions()
-    actions.append(
-        lut.SetParameter('type_negotiation_duration_s', args.type_negotiation_duration_s))
-    actions.append(
-        lu.log_info([f'Using type negotiation duration: {args.type_negotiation_duration_s}']))
     actions.append(
         lu.include(
             'isaac_mapping_ros',

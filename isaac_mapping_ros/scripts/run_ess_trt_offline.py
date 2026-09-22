@@ -27,7 +27,7 @@ import numpy as np
 from stereo_inference_base import BaseStereoInference, BaseStereoRunner
 import tensorrt as trt
 
-DEFAULT_ENGINE_FILE_PATH = os.getenv('ISAAC_ROS_WS', ".") \
+DEFAULT_ENGINE_FILE_PATH = os.getenv('ISAAC_ROS_WS', '.') \
     + '/isaac_ros_assets/models/dnn_stereo_disparity' \
     + '/dnn_stereo_disparity_v4.1.0_onnx_trt10.16/ess.engine'
 
@@ -42,12 +42,18 @@ class ESSInference(BaseStereoInference):
     """TensorRT-based ESS inference for stereo depth estimation."""
 
     def __init__(self, engine_file_path, threshold=0.4, verbose=False):
-        """Initialize TensorRT inference engine.
+        """
+        Initialize TensorRT inference engine.
 
-        Args:
-            engine_file_path: Path to the TensorRT engine file
-            threshold: Confidence threshold for depth filtering
-            verbose: Enable verbose logging
+        Parameters
+        ----------
+        engine_file_path : str
+            Path to the TensorRT engine file
+        threshold : float
+            Confidence threshold for depth filtering
+        verbose : bool
+            Enable verbose logging
+
         """
         self.threshold = threshold
         super().__init__(engine_file_path, verbose)
@@ -56,7 +62,7 @@ class ESSInference(BaseStereoInference):
         """Load TensorRT plugins needed for ESS model."""
         try:
             # Initialize TensorRT plugins registry
-            trt.init_libnvinfer_plugins(None, "")
+            trt.init_libnvinfer_plugins(None, '')
 
             # Load ESS specific plugins
             # Determine architecture
@@ -74,14 +80,14 @@ class ESSInference(BaseStereoInference):
             if os.path.exists(ess_plugin_path):
                 ctypes.CDLL(ess_plugin_path)  # Load library but don't keep reference
                 if self.verbose:
-                    print(f"Loaded ESS plugins from {ess_plugin_path}")
+                    print(f'Loaded ESS plugins from {ess_plugin_path}')
             else:
-                print(f"Warning: ESS plugin not found at expected path: {ess_plugin_path}")
-                print("This is an issue if running ESS >=4.0")
+                print(f'Warning: ESS plugin not found at expected path: {ess_plugin_path}')
+                print('This is an issue if running ESS >=4.0')
 
         except Exception as e:
-            print(f"Warning: Error loading TensorRT plugins: {e}")
-            print("Attempting to continue without explicit plugin loading...")
+            print(f'Warning: Error loading TensorRT plugins: {e}')
+            print('Attempting to continue without explicit plugin loading...')
 
     def get_input_binding_names(self):
         """Get list of input binding names for the ESS model."""
@@ -92,13 +98,19 @@ class ESSInference(BaseStereoInference):
         return ['output_left', 'output_conf']
 
     def preprocess_image(self, image):
-        """Preprocess an image for ESS inference.
+        """
+        Preprocess an image for ESS inference.
 
-        Args:
-            image: BGR image (HWC format)
+        Parameters
+        ----------
+        image : ndarray
+            BGR image (HWC format)
 
-        Returns:
-            Tuple of (preprocessed image, preprocessing metadata)
+        Returns
+        -------
+        tuple
+            Preprocessed image and preprocessing metadata
+
         """
         # Resize to network input size
         resized = cv2.resize(image, (NETWORK_WIDTH, NETWORK_HEIGHT))
@@ -122,26 +134,40 @@ class ESSInference(BaseStereoInference):
         return np.ascontiguousarray(nchw), preprocess_metadata
 
     def process_inference_results(self, results, preprocess_metadata):
-        """Process raw inference results from ESS model.
+        """
+        Process raw inference results from ESS model.
 
-        Args:
-            results: Raw inference results from GPU
-            preprocess_metadata: Metadata from preprocessing (unused for ESS)
+        Parameters
+        ----------
+        results : dict
+            Raw inference results from GPU
+        preprocess_metadata : dict
+            Metadata from preprocessing (unused for ESS)
 
-        Returns:
-            Tuple of (disparity, confidence) arrays
+        Returns
+        -------
+        tuple
+            Disparity and confidence arrays
+
         """
         return results['output_left'], results['output_conf']
 
     def apply_threshold(self, disparity, confidence):
-        """Apply confidence threshold to disparity.
+        """
+        Apply confidence threshold to disparity.
 
-        Args:
-            disparity: Disparity array
-            confidence: Confidence array
+        Parameters
+        ----------
+        disparity : ndarray
+            Disparity array
+        confidence : ndarray
+            Confidence array
 
-        Returns:
+        Returns
+        -------
+        ndarray
             Filtered disparity array
+
         """
         # Apply confidence threshold
         mask = confidence < self.threshold
@@ -191,20 +217,20 @@ class ESSRunner(BaseStereoRunner):
         depth = cv2.resize(depth, (IMAGE_WIDTH, IMAGE_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
         # Save depth image
-        output_path = self.output_dir + "/" + left_image_name.split('.')[0] + '.png'
+        output_path = self.output_dir + '/' + left_image_name.split('.')[0] + '.png'
         self.ensure_directory_exists_for_file(output_path)
         cv2.imwrite(output_path, depth.astype(np.uint16))
 
         if self.verbose:
-            print(f"Saved depth image: {output_path}")
+            print(f'Saved depth image: {output_path}')
 
         # Increment counter
         self.image_count += 1
         if self.image_count % 100 == 0:
             print(
-                "Processed",
+                'Processed',
                 self.image_count,
-                "image pairs, currently on",
+                'image pairs, currently on',
                 left_image_name,
             )
 

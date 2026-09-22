@@ -20,13 +20,14 @@
 #include "isaac_ros_visual_global_localization/visual_global_localization_node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-int main(int argc, char* argv[]) {
+int main(int argc, char * argv[])
+{
   rclcpp::init(argc, argv);
   rclcpp::executors::MultiThreadedExecutor exec;
   rclcpp::NodeOptions visual_localization_options;
   visual_localization_options.arguments();
   auto visual_global_localization_node = std::make_shared<
-      nvidia::isaac_ros::visual_global_localization::VisualGlobalLocalizationNode>(
+    nvidia::isaac_ros::visual_global_localization::VisualGlobalLocalizationNode>(
       visual_localization_options);
   exec.add_node(visual_global_localization_node);
   exec.spin();
