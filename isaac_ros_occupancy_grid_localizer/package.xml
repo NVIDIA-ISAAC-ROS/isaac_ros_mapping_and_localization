@@ -21,7 +21,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>isaac_ros_occupancy_grid_localizer</name>
-  <version>5.0.0</version>
+  <version>5.1.0</version>
   <description>Occupancy Grid Global Localizer.</description>
 
   <maintainer email="isaac-ros-maintainers@nvidia.com">Isaac ROS Maintainers</maintainer>
@@ -42,8 +42,8 @@
   <depend>isaac_ros_pointcloud_utils</depend>
   <depend>isaac_ros_common</depend>
 
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
-  <exec_depend>nav2_bringup</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>
